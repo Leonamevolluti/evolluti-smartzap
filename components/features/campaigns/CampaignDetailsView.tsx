@@ -478,7 +478,7 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
                     )}
                   </td>
                   <td className="px-6 py-3">
-                    {msg.contactId && msg.error ? (
+                    {msg.contactId && msg.status === MessageStatus.SKIPPED && msg.error ? (
                       <button
                         onClick={() => {
                           const h = humanizePrecheckReason(String(msg.error));

@@ -23,6 +23,14 @@ interface CampaignContactRow {
   custom_fields: Record<string, unknown> | null
 }
 
+interface ContactRow {
+  id: string
+  name: string | null
+  phone: string
+  email: string | null
+  custom_fields: Record<string, unknown> | null
+}
+
 /**
  * POST /api/campaigns/[id]/resend-skipped
  * Revalida os contatos SKIPPED e reenfileira apenas os que ficarem válidos.
@@ -118,18 +126,59 @@ export async function POST(_request: Request, { params }: Params) {
       )
     }
 
+    // 3.1) Trazer dados atuais de contacts (para refletir correções no contato)
+    const contactIds = Array.from(
+      new Set(
+        contacts
+          .map((c) => c.contact_id)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      )
+    )
+
+    const contactById = new Map<string, ContactRow>()
+    if (contactIds.length > 0) {
+      const { data: latestContacts, error: latestContactsError } = await supabase
+        .from('contacts')
+        .select('id, name, phone, email, custom_fields')
+        .in('id', contactIds)
+
+      if (latestContactsError) {
+        return NextResponse.json(
+          { error: 'Falha ao carregar contatos', details: latestContactsError.message },
+          { status: 500 }
+        )
+      }
+
+      for (const c of (latestContacts || []) as any[]) {
+        if (!c?.id) continue
+        contactById.set(String(c.id), {
+          id: String(c.id),
+          name: (c.name as string | null) ?? null,
+          phone: String(c.phone || ''),
+          email: (c.email as string | null) ?? null,
+          custom_fields: (c.custom_fields as Record<string, unknown> | null) ?? null,
+        })
+      }
+    }
+
     const nowIso = new Date().toISOString()
 
     const validForResend: Array<{ contactId?: string; phone: string; name: string; email?: string; custom_fields?: Record<string, unknown> }> = []
     const updates: Array<any> = []
 
     for (const row of contacts) {
+      const latest = row.contact_id ? contactById.get(row.contact_id) : undefined
+      const effectiveName = (latest?.name ?? row.name ?? '') as string
+      const effectivePhone = (latest?.phone ?? row.phone) as string
+      const effectiveEmail = (latest?.email ?? row.email) as string | null
+      const effectiveCustomFields = (latest?.custom_fields ?? row.custom_fields ?? {}) as Record<string, unknown>
+
       const precheck = precheckContactForTemplate(
         {
-          phone: row.phone,
-          name: row.name || '',
-          email: row.email || undefined,
-          custom_fields: row.custom_fields || {},
+          phone: effectivePhone,
+          name: effectiveName || '',
+          email: effectiveEmail || undefined,
+          custom_fields: effectiveCustomFields || {},
           contactId: row.contact_id || null,
         },
         template as any,
@@ -140,11 +189,16 @@ export async function POST(_request: Request, { params }: Params) {
         updates.push({
           id: row.id,
           status: 'skipped',
-          skipped_at: nowIso,
-          skip_code: precheck.skipCode,
-          skip_reason: precheck.reason,
-          error: null,
+          // Mantém snapshot sincronizado com o contato atual
+          phone: precheck.normalizedPhone || effectivePhone,
+          name: effectiveName || null,
+          email: effectiveEmail,
+          custom_fields: effectiveCustomFields,
+          // Motivo do skip: usa colunas existentes (failure_reason/error)
+          failure_reason: precheck.reason,
+          error: precheck.reason,
           message_id: null,
+          failed_at: null,
         })
         continue
       }
@@ -153,10 +207,12 @@ export async function POST(_request: Request, { params }: Params) {
       updates.push({
         id: row.id,
         phone: precheck.normalizedPhone,
+        name: effectiveName || null,
+        email: effectiveEmail,
+        custom_fields: effectiveCustomFields,
         status: 'pending',
-        skipped_at: null,
-        skip_code: null,
-        skip_reason: null,
+        failure_code: null,
+        failure_reason: null,
         error: null,
         message_id: null,
         failed_at: null,
@@ -165,9 +221,9 @@ export async function POST(_request: Request, { params }: Params) {
       validForResend.push({
         contactId: row.contact_id || undefined,
         phone: precheck.normalizedPhone,
-        name: row.name || '',
-        email: row.email || undefined,
-        custom_fields: row.custom_fields || {},
+        name: effectiveName || '',
+        email: effectiveEmail || undefined,
+        custom_fields: effectiveCustomFields || {},
       })
     }
 
