@@ -455,10 +455,10 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
                     )}
                   </td>
                   <td className="px-6 py-3">
-                    {msg.contactId ? (
+                    {msg.contactId && msg.error ? (
                       <button
                         onClick={() => {
-                          const h = msg.error ? humanizePrecheckReason(String(msg.error)) : null;
+                          const h = humanizePrecheckReason(String(msg.error));
                           setQuickEditContactId(msg.contactId!);
                           setQuickEditFocus(h?.focus || null);
                         }}

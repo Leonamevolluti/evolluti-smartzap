@@ -31,11 +31,6 @@ Você tem dois caminhos:
 
 ## Pré-requisitos
 
-Antes de começar, garanta:
-
-- Node.js instalado (recomendado **Node 18+**).
-- Contas criadas **e** projetos criados nas plataformas abaixo.
-
 Crie conta (gratuita) e deixe aberto em outra aba:
 
 | Serviço | Para quê | Link |
@@ -44,12 +39,6 @@ Crie conta (gratuita) e deixe aberto em outra aba:
 | Vercel | Deploy | <https://vercel.com> |
 | Supabase | Banco de dados | <https://supabase.com> |
 | Upstash (QStash) | Fila/workflows | <https://upstash.com> |
-
-Checklist rápido (para não travar no meio do caminho):
-
-- **Supabase:** crie um **Project** (não basta só a conta).
-- **Upstash:** acesse **QStash** (não basta só criar conta).
-- **Vercel:** conecte sua conta ao GitHub (para importar o repositório).
 
 ---
 
@@ -81,10 +70,6 @@ Se você já alterou arquivos e ocorrer conflito, resolva com calma (ou peça aj
 2. **Add New → Project**.
 3. Selecione o repositório `smartzap` (seu fork).
 4. Clique em **Deploy**.
-
-Quando finalizar:
-
-- Abra **Domains** e copie a URL do projeto (você vai usar no `/setup`).
 
 <details>
     <summary><strong>Ver prints do deploy (opcional)</strong></summary>
@@ -168,8 +153,6 @@ Se você já tiver Meta/WhatsApp Cloud API:
 - `WHATSAPP_PHONE_ID`
 - `WHATSAPP_BUSINESS_ACCOUNT_ID`
 
-> Se você ainda não configurou WhatsApp, tudo bem: você consegue concluir o setup, logar e navegar. Para **enviar** mensagens de verdade, WhatsApp + templates serão necessários.
-
 ---
 
 ### 4. Rodar o Wizard
@@ -214,10 +197,7 @@ Depois do Wizard, a Vercel faz um novo deploy. Ao finalizar, você cai no `/logi
 ### 6. Prova de vida
 
 1. **Contatos** → crie um contato (use seu número para teste).
-2. **Campanhas** → crie uma campanha.
-3. Se você **já configurou WhatsApp + templates**, envie uma mensagem curta.
-
-> Se você ainda não configurou WhatsApp/templates, considere a “prova de vida” como: **conseguir logar** e **navegar pelo dashboard** sem erros.
+2. **Campanhas** → crie uma campanha e envie uma mensagem curta.
 
 ---
 
@@ -226,21 +206,11 @@ Depois do Wizard, a Vercel faz um novo deploy. Ao finalizar, você cai no `/logi
 1. `npm install`
 2. `cp .env.example .env.local`
 3. Preencha no `.env.local`:
-    - **Segurança/admin (necessário para login e rotas protegidas):**
-        - `MASTER_PASSWORD`
-        - `SMARTZAP_API_KEY`
-        - `SMARTZAP_ADMIN_KEY`
-        - `FRONTEND_URL=http://localhost:3000`
-    - **Supabase (banco):**
-        - `NEXT_PUBLIC_SUPABASE_URL`
-        - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (ou `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`)
-        - `SUPABASE_SECRET_KEY`
-    - **QStash (para campanhas):**
-        - `QSTASH_TOKEN`
+     - `NEXT_PUBLIC_SUPABASE_URL`
+     - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (ou `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`)
+     - `SUPABASE_SECRET_KEY`
 4. No Supabase (SQL Editor): rode `lib/migrations/0001_initial_schema.sql`
 5. `npm run dev` e abra `http://localhost:3000`
-
-> Dica: o arquivo `.env.example` já documenta tudo com comentários. Se bater dúvida, use ele como “fonte de verdade”.
 
 ---
 
@@ -268,11 +238,6 @@ Checklist:
 - `QSTASH_TOKEN` configurado no ambiente correto (Production vs Preview vs Local).
 - Depois de alterar variáveis de ambiente na Vercel, faça redeploy (ou aguarde o deploy disparado pelo Wizard).
 - Se você está em localhost: reinicie o servidor após alterar `.env.local`.
-
-Se o erro for relacionado a envio no WhatsApp:
-
-- Confirme que você configurou `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_BUSINESS_ACCOUNT_ID`.
-- Confirme que existe um **template aprovado** (o SmartZap envia templates, então sem template não há envio real).
 
 ---
 

@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { customFieldDefDb } from '@/lib/supabase-db'
 import { validateBody, formatZodErrors } from '@/lib/api-validation'
-import { validateSession } from '@/lib/user-auth'
 import { z } from 'zod'
 
 export const dynamic = 'force-dynamic'
@@ -16,10 +15,6 @@ const CreateCustomFieldSchema = z.object({
 })
 
 export async function GET(request: Request) {
-    if (!await validateSession()) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
     try {
         const { searchParams } = new URL(request.url)
         const entityType = (searchParams.get('entityType') as 'contact' | 'deal') || 'contact'
@@ -37,10 +32,6 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-    if (!await validateSession()) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
     try {
         const body = await request.json()
 

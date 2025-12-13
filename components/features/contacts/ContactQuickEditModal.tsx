@@ -32,6 +32,36 @@ const sanitizeCustomFieldsForUpdate = (fields?: Record<string, any>) => {
   return out;
 };
 
+type ContactsQueryData = ContactsCache | Contact[] | undefined;
+
+const isContactsCache = (value: any): value is ContactsCache => {
+  return !!value && typeof value === 'object' && Array.isArray(value.list) && value.byId && typeof value.byId === 'object';
+};
+
+const patchContactsQueryData = (current: ContactsQueryData, id: string, data: ContactUpdatePayload): ContactsQueryData => {
+  if (!current) return current;
+
+  // Alguns lugares (ex: wizard) usam ['contacts'] como Contact[] puro.
+  if (Array.isArray(current)) {
+    return current.map((c) => (c.id === id ? ({ ...c, ...data, updatedAt: new Date().toISOString() } as Contact) : c));
+  }
+
+  // Outros lugares usam o shape normalizado { list, byId }.
+  if (isContactsCache(current)) {
+    const existing = current.byId[id];
+    if (!existing) return current;
+    const patched: Contact = {
+      ...existing,
+      ...data,
+      updatedAt: new Date().toISOString(),
+    };
+    const nextList = current.list.map((c) => (c.id === id ? patched : c));
+    return { list: nextList, byId: { ...current.byId, [id]: patched } };
+  }
+
+  return current;
+};
+
 type FocusTarget =
   | { type: 'email' }
   | { type: 'custom_field'; key: string }
@@ -127,24 +157,13 @@ export const ContactQuickEditModal: React.FC<ContactQuickEditModalProps> = ({
       await queryClient.cancelQueries({ queryKey: ['contacts'] });
       if (contactId) await queryClient.cancelQueries({ queryKey: ['contact', contactId] });
 
-      const previousContacts = queryClient.getQueryData<ContactsCache>(['contacts']);
+      const previousContacts = queryClient.getQueryData<ContactsQueryData>(['contacts']);
       const previousContact = contactId
         ? queryClient.getQueryData<Contact>(['contact', contactId])
         : undefined;
 
-      // Patch lista/cache principal
-      queryClient.setQueryData<ContactsCache>(['contacts'], (current) => {
-        if (!current) return current;
-        const existing = current.byId[id];
-        if (!existing) return current;
-        const patched: Contact = {
-          ...existing,
-          ...data,
-          updatedAt: new Date().toISOString(),
-        };
-        const nextList = current.list.map((c) => (c.id === id ? patched : c));
-        return { list: nextList, byId: { ...current.byId, [id]: patched } };
-      });
+      // Patch lista/cache principal (suporta Contact[] e { list, byId })
+      queryClient.setQueryData<ContactsQueryData>(['contacts'], (current) => patchContactsQueryData(current, id, data));
 
       // Patch cache de detalhe
       if (contactId) {
