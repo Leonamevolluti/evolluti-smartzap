@@ -20,8 +20,20 @@ import {
     CustomFieldDefinition,
 } from '../types'
 
-// Gera um ID simples para entidades que não usam UUID
-const generateId = () => Math.random().toString(36).substr(2, 9)
+// Gera um ID compatível com ambientes que usam UUID (preferencial) e também funciona como TEXT.
+// - Em Supabase, muitos schemas antigos usam `uuid` como PK.
+// - No schema consolidado atual, os PKs são TEXT com defaults, mas aceitar UUID como string é ok.
+const generateId = () => {
+    try {
+        // Web Crypto (browser/edge) e Node moderno
+        if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID()
+    } catch {
+        // ignore
+    }
+
+    // Fallback (menos ideal, mas evita quebrar em runtimes sem randomUUID)
+    return Math.random().toString(36).slice(2)
+}
 
 // ============================================================================
 // CAMPAIGNS
@@ -602,8 +614,46 @@ export const templateDb = {
         }
     },
 
-    upsert: async (template: Template): Promise<void> => {
+    upsert: async (
+        input:
+            | Template
+            | Array<{
+                name: string
+                language?: string
+                category?: string
+                status?: string
+                components?: unknown
+                parameter_format?: 'positional' | 'named' | string
+                spec_hash?: string | null
+                fetched_at?: string | null
+              }>
+    ): Promise<void> => {
         const now = new Date().toISOString()
+
+        // Batch upsert (rows already in DB column format)
+        if (Array.isArray(input)) {
+            const { error } = await supabase
+                .from('templates')
+                .upsert(
+                    input.map(r => ({
+                        name: r.name,
+                        category: r.category,
+                        language: r.language,
+                        status: r.status,
+                        parameter_format: (r as any).parameter_format,
+                        components: r.components,
+                        spec_hash: (r as any).spec_hash ?? null,
+                        fetched_at: (r as any).fetched_at ?? null,
+                        updated_at: now,
+                    })),
+                    { onConflict: 'name' }
+                )
+            if (error) throw error
+            return
+        }
+
+        // Single template upsert (App Template shape)
+        const template = input
 
         const { error } = await supabase
             .from('templates')

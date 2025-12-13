@@ -83,10 +83,10 @@ export interface Campaign {
   templateParameterFormat?: 'positional' | 'named' | null;
   templateFetchedAt?: string | null;
   // Scheduling
-  scheduledAt?: string;  // ISO timestamp for scheduled campaigns
-  startedAt?: string;    // When campaign actually started sending
-  completedAt?: string;  // When campaign finished
-  pausedAt?: string;     // When campaign was paused
+  scheduledAt?: string | null;  // ISO timestamp for scheduled campaigns
+  startedAt?: string | null;    // When campaign actually started sending
+  completedAt?: string | null;  // When campaign finished
+  pausedAt?: string | null;     // When campaign was paused
   // Contacts (for resume functionality and optimistic UI)
   selectedContactIds?: string[];
   pendingContacts?: { name: string; phone: string }[];  // For immediate "Pending" display

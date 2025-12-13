@@ -22,6 +22,7 @@ export async function getCampaignsServer(): Promise<Campaign[]> {
         sent: row.sent,
         delivered: row.delivered,
         read: row.read,
+        skipped: (row as any).skipped || 0,
         failed: row.failed,
         createdAt: row.created_at,
         scheduledAt: row.scheduled_date,

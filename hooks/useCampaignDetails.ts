@@ -33,7 +33,7 @@ export const useCampaignDetailsController = () => {
     campaignId: id,
     status: campaign?.status,
     recipients: campaign?.recipients || 0,
-    completedAt: campaign?.completedAt,
+    completedAt: campaign?.completedAt ?? undefined,
   });
 
   // Polling logic:
