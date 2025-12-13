@@ -27,6 +27,15 @@ function getSupabasePublishableKey(): string | undefined {
 // Use this for API routes and server components
 let _supabaseAdmin: SupabaseClient | null = null
 
+/**
+ * Retorna um client Supabase server-side com Service Role (bypassa RLS).
+ *
+ * Use em rotas de API e componentes server-side que precisam de acesso administrativo.
+ * Retorna `null` quando variáveis de ambiente obrigatórias não estão configuradas
+ * (útil durante o wizard de setup).
+ *
+ * @returns Client Supabase admin, ou `null` se não configurado.
+ */
 export function getSupabaseAdmin(): SupabaseClient | null {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL
     const key = process.env.SUPABASE_SECRET_KEY
@@ -62,6 +71,15 @@ export function getSupabaseAdmin(): SupabaseClient | null {
 // Use this for browser components
 let _supabaseBrowser: SupabaseClient | null = null
 
+/**
+ * Retorna um client Supabase para uso no browser (respeita RLS).
+ *
+ * Este client usa a publishable/anon key (`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`).
+ * Retorna `null` quando não configurado, permitindo que a aplicação suba para o
+ * wizard de configuração.
+ *
+ * @returns Client Supabase do navegador, ou `null` se não configurado.
+ */
 export function getSupabaseBrowser(): SupabaseClient | null {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL
     const key = getSupabasePublishableKey()
@@ -77,6 +95,16 @@ export function getSupabaseBrowser(): SupabaseClient | null {
     return _supabaseBrowser
 }
 
+/**
+ * Facade de acesso ao Supabase.
+ *
+ * - `admin`: client server-side com Service Role (bypassa RLS) — para rotas de API.
+ * - `browser`: client client-side com chave publishable (respeita RLS) — para componentes.
+ * - `from`/`rpc`: atalhos que assumem client admin (server-side).
+ *
+ * Observação: esta facade existe por compatibilidade; prefira obter explicitamente
+ * via {@link getSupabaseAdmin} / {@link getSupabaseBrowser} quando possível.
+ */
 // Backwards-compatible export (defaults to admin client for API routes)
 export const supabase = {
     get admin() {
@@ -155,6 +183,14 @@ export const supabase = {
 // CONNECTION CHECK
 // ============================================================================
 
+/**
+ * Verifica conectividade com o Supabase medindo latência aproximada.
+ *
+ * A checagem tenta executar uma query simples em `campaigns`.
+ * Se a tabela ainda não existir (ambiente novo), considera conectividade como OK.
+ *
+ * @returns Objeto com `connected`, `latency` (ms) quando aplicável e `error` quando falhar.
+ */
 export async function checkSupabaseConnection(): Promise<{
     connected: boolean
     latency?: number
@@ -188,6 +224,11 @@ export async function checkSupabaseConnection(): Promise<{
 // SUPABASE AVAILABILITY CHECK
 // ============================================================================
 
+/**
+ * Indica se as variáveis de ambiente mínimas do Supabase estão configuradas.
+ *
+ * @returns `true` se URL + publishable key + secret key estiverem presentes; caso contrário `false`.
+ */
 export function isSupabaseConfigured(): boolean {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL
     const publishableKey = getSupabasePublishableKey()

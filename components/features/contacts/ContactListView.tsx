@@ -37,6 +37,7 @@ import {
 import Papa from 'papaparse';
 import { Contact, ContactStatus, CustomFieldDefinition } from '../../../types';
 import { CustomFieldsManager } from './CustomFieldsManager';
+import { CustomFieldsSheet } from './CustomFieldsSheet';
 
 // ... (existing imports)
 
@@ -83,6 +84,7 @@ interface ContactListViewProps {
   stats: ContactStats;
   tags: string[];
   customFields?: CustomFieldDefinition[]; // New prop
+  onRefreshCustomFields?: () => void;
   isLoading: boolean;
 
   // Search & Filters
@@ -174,7 +176,8 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
   onImport,
   isImporting,
   isDeleting,
-  customFields
+  customFields,
+  onRefreshCustomFields
 }) => {
   // Local state for modals
   const [newContact, setNewContact] = useState<{ name: string, phone: string, email: string, tags: string, custom_fields: Record<string, any> }>({
@@ -209,6 +212,19 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
       setLocalCustomFields(customFields);
     }
   }, [customFields]);
+
+  const handleCustomFieldCreated = (field: CustomFieldDefinition) => {
+    setLocalCustomFields((prev) => {
+      if (prev.some((f) => f.id === field.id || f.key === field.key)) return prev;
+      return [...prev, field];
+    });
+    onRefreshCustomFields?.();
+  };
+
+  const handleCustomFieldDeleted = (id: string) => {
+    setLocalCustomFields((prev) => prev.filter((f) => f.id !== id));
+    onRefreshCustomFields?.();
+  };
 
   // Sync edit form when editing contact changes
   React.useEffect(() => {
@@ -394,6 +410,21 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
             <UploadCloud size={18} />
             Importar CSV
           </button>
+
+          <CustomFieldsSheet
+            entityType="contact"
+            onFieldCreated={handleCustomFieldCreated}
+            onFieldDeleted={handleCustomFieldDeleted}
+          >
+            <button
+              className="flex items-center gap-2 px-4 py-2.5 bg-zinc-900 border border-white/10 rounded-xl text-gray-300 font-medium hover:bg-white/5 transition-colors"
+              type="button"
+            >
+              <FileText size={18} />
+              Campos personalizados
+            </button>
+          </CustomFieldsSheet>
+
           <button
             onClick={() => setIsAddModalOpen(true)}
             className="flex items-center gap-2 px-4 py-2.5 bg-white text-black rounded-xl font-bold hover:bg-gray-200 transition-colors shadow-lg shadow-white/10"
@@ -473,7 +504,7 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
         </div>
 
         {/* Results Info */}
-        <div className="px-5 py-3 bg-white/[0.02] border-b border-white/5 flex items-center justify-between text-sm">
+        <div className="px-5 py-3 bg-white/2 border-b border-white/5 flex items-center justify-between text-sm">
           <span className="text-gray-500">
             Mostrando <span className="text-white font-medium">{contacts.length}</span> de{' '}
             <span className="text-white font-medium">{totalFiltered}</span> contatos
@@ -561,7 +592,7 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
                     </td>
                     <td className="px-6 py-5">
                       <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-zinc-700 to-zinc-900 border border-white/10 text-white flex items-center justify-center font-bold text-xs shadow-inner" aria-hidden="true">
+                        <div className="w-9 h-9 rounded-full bg-linear-to-br from-zinc-700 to-zinc-900 border border-white/10 text-white flex items-center justify-center font-bold text-xs shadow-inner" aria-hidden="true">
                           {(contact.name || contact.phone).substring(0, 2).toUpperCase()}
                         </div>
                         <div>
@@ -723,11 +754,11 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
               </div>
 
               {/* Custom Fields */}
-              {customFields && customFields.length > 0 && (
+              {localCustomFields.length > 0 && (
                 <div className="pt-2 border-t border-white/10 mt-2">
                   <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Campos Personalizados</h3>
                   <div className="space-y-3">
-                    {customFields.map(field => (
+                    {localCustomFields.map(field => (
                       <div key={field.id}>
                         <label className="block text-sm text-gray-400 mb-1">{field.label}</label>
                         {field.type === 'select' ? (
@@ -821,11 +852,11 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
               </div>
 
               {/* Custom Fields */}
-              {customFields && customFields.length > 0 && (
+              {localCustomFields.length > 0 && (
                 <div className="pt-2 border-t border-white/10 mt-2">
                   <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Campos Personalizados</h3>
                   <div className="space-y-3">
-                    {customFields.map(field => (
+                    {localCustomFields.map(field => (
                       <div key={field.id}>
                         <label className="block text-sm text-gray-400 mb-1">{field.label}</label>
                         {field.type === 'select' ? (
@@ -969,7 +1000,7 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
                   </div>
 
                   <div className="bg-zinc-900/50 rounded-xl p-4 flex gap-3 border border-white/5">
-                    <AlertCircle className="text-primary-500 flex-shrink-0" size={20} />
+                    <AlertCircle className="text-primary-500 shrink-0" size={20} />
                     <div className="text-sm text-gray-400">
                       <p className="text-white font-medium mb-1">Dica de Formatação</p>
                       <p>Seu arquivo deve ter cabeçalhos na primeira linha (Ex: Nome, Telefone). O sistema tentará identificar as colunas automaticamente.</p>
@@ -1201,7 +1232,7 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
         setIsMappingSheetOpen(open);
         if (!open) setMappingView('map'); // Reset view on close
       }}>
-        <SheetContent className="w-[400px] sm:w-[540px] border-l border-white/10 bg-zinc-950 p-0 flex flex-col z-[60]">
+        <SheetContent className="w-100 sm:w-135 border-l border-white/10 bg-zinc-950 p-0 flex flex-col z-60">
           <SheetHeader className="p-6 border-b border-white/10">
             <div className="flex items-center justify-between">
               <SheetTitle className="text-white flex items-center gap-2">
@@ -1238,10 +1269,10 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
             <CustomFieldsManager
               entityType="contact"
               onFieldCreated={(newField) => {
-                setLocalCustomFields(prev => [...prev, newField]);
+                handleCustomFieldCreated(newField);
               }}
               onFieldDeleted={(id) => {
-                setLocalCustomFields(prev => prev.filter(f => f.id !== id));
+                handleCustomFieldDeleted(id);
               }}
             />
           ) : (

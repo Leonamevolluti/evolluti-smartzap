@@ -14,13 +14,71 @@ export interface LogEntry {
 }
 
 export interface Logger {
+  /**
+   * Registra uma mensagem de nível INFO.
+   *
+   * @param message Mensagem principal do log.
+   * @param context Contexto estruturado adicional (evite dados sensíveis).
+   * @returns Nada.
+   */
   info(message: string, context?: Record<string, unknown>): void;
+
+  /**
+   * Registra uma mensagem de nível WARN.
+   *
+   * @param message Mensagem principal do log.
+   * @param context Contexto estruturado adicional (evite dados sensíveis).
+   * @returns Nada.
+   */
   warn(message: string, context?: Record<string, unknown>): void;
+
+  /**
+   * Registra uma mensagem de nível ERROR.
+   *
+   * @param message Mensagem principal do log.
+   * @param context Contexto estruturado adicional (evite dados sensíveis).
+   * @returns Nada.
+   */
   error(message: string, context?: Record<string, unknown>): void;
+
+  /**
+   * Registra uma mensagem de nível DEBUG.
+   *
+   * Observação: pode ser suprimido em produção dependendo da implementação.
+   *
+   * @param message Mensagem principal do log.
+   * @param context Contexto estruturado adicional (evite dados sensíveis).
+   * @returns Nada.
+   */
   debug(message: string, context?: Record<string, unknown>): void;
+
+  /**
+   * Retorna todos os logs armazenados em memória.
+   *
+   * @returns Uma cópia do buffer de logs.
+   */
   getLogs(): LogEntry[];
+
+  /**
+   * Retorna logs filtrados por nível.
+   *
+   * @param level Nível do log.
+   * @returns Lista de entradas do nível solicitado.
+   */
   getLogsByLevel(level: LogEntry['level']): LogEntry[];
+
+  /**
+   * Limpa o buffer de logs em memória.
+   *
+   * @returns Nada.
+   */
   clearLogs(): void;
+
+  /**
+   * Exporta o buffer de logs como JSON (string).
+   *
+   * @returns Logs serializados em JSON.
+   */
   exportLogs(): string;
 }
 
@@ -159,7 +217,9 @@ class StructuredLogger implements Logger {
 export const logger = new StructuredLogger();
 
 /**
- * Generates a unique trace ID for request tracking
+ * Gera um identificador único de rastreio (traceId) para correlacionar eventos.
+ *
+ * @returns Um UUID em formato string.
  */
 export function generateTraceId(): string {
   return crypto.randomUUID();
@@ -170,7 +230,12 @@ export function generateTraceId(): string {
 // ============================================================================
 
 /**
- * Logs API request
+ * Registra um log estruturado para uma requisição de API.
+ *
+ * @param method Método HTTP (ex.: GET, POST).
+ * @param url URL/rota chamada.
+ * @param data Payload opcional (será serializado para JSON quando possível).
+ * @returns Nada.
  */
 export function logApiRequest(method: string, url: string, data?: unknown): void {
   logger.info('API Request', {
@@ -181,7 +246,13 @@ export function logApiRequest(method: string, url: string, data?: unknown): void
 }
 
 /**
- * Logs API response
+ * Registra um log estruturado para uma resposta de API.
+ *
+ * @param method Método HTTP (ex.: GET, POST).
+ * @param url URL/rota chamada.
+ * @param status Status HTTP retornado.
+ * @param data Payload opcional (será serializado para JSON quando possível).
+ * @returns Nada.
  */
 export function logApiResponse(method: string, url: string, status: number, data?: unknown): void {
   logger.info('API Response', {
@@ -193,7 +264,12 @@ export function logApiResponse(method: string, url: string, status: number, data
 }
 
 /**
- * Logs API error
+ * Registra um erro de API com stack trace quando disponível.
+ *
+ * @param method Método HTTP (ex.: GET, POST).
+ * @param url URL/rota chamada.
+ * @param error Instância de erro capturada.
+ * @returns Nada.
  */
 export function logApiError(method: string, url: string, error: Error): void {
   logger.error('API Error', {
@@ -205,7 +281,12 @@ export function logApiError(method: string, url: string, error: Error): void {
 }
 
 /**
- * Logs campaign event
+ * Registra um evento de campanha (telemetria de alto nível).
+ *
+ * @param campaignId ID da campanha.
+ * @param event Nome do evento (ex.: "created", "sending", "completed").
+ * @param data Dados adicionais do evento.
+ * @returns Nada.
  */
 export function logCampaignEvent(campaignId: string, event: string, data?: Record<string, unknown>): void {
   logger.info('Campaign Event', {
@@ -216,7 +297,13 @@ export function logCampaignEvent(campaignId: string, event: string, data?: Recor
 }
 
 /**
- * Logs message send event
+ * Registra o resultado de envio de uma mensagem (sucesso/falha).
+ *
+ * @param phoneNumber Número do destinatário (idealmente já normalizado).
+ * @param templateId Identificador do template usado.
+ * @param status Resultado do envio.
+ * @param error Mensagem/descrição do erro quando `status` for `failed`.
+ * @returns Nada.
  */
 export function logMessageSend(
   phoneNumber: string,

@@ -1,88 +1,156 @@
-# SmartZap - Template de Aula (SaaS CRM)
+# SmartZap (SaaS de automação WhatsApp)
 
 <div align="center">
 
 ![SmartZap](https://img.shields.io/badge/SmartZap-WhatsApp%20Marketing-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)
-![Next.js](https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js)
+![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js)
 ![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react)
 ![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=flat-square&logo=supabase&logoColor=white)
 
-**Template base para construção de um SaaS de Automação com WhatsApp**
+CRM + automação de campanhas no WhatsApp (Cloud API), com fila/workflows (Upstash QStash) e geração de conteúdo via IA.
 
 </div>
 
 ---
 
-## 📚 Sobre este Template
+## O que é
 
-Este repositório é um **template educacional** simplificado do projeto SmartZap. Ele contém a estrutura essencial para criar um CRM com disparo de mensagens via WhatsApp, ideal para aprendizado e customização.
+O SmartZap é uma aplicação full-stack (Next.js App Router) que permite:
 
-Componentes complexos ou não essenciais foram movidos para a pasta `tmp/` para facilitar o entendimento inicial, mas o código permanece acessível se você quiser consultar.
+- gerenciar **contatos** e campos personalizados;
+- visualizar/sincronizar/criar **templates** do WhatsApp;
+- criar e disparar **campanhas** (envio em massa) com pré-validação;
+- acompanhar **métricas** e alertas de conta;
+- configurar integrações (Supabase, Meta, Upstash, IA) por variáveis de ambiente e/ou wizard.
 
-## 🚀 Funcionalidades Principais (Core)
+Este repositório também é usado como base educacional. A pasta `tmp/` pode conter materiais extras e utilitários.
 
-- **📱 Dashboard**: Visão geral de métricas.
-- **👥 Contatos**: CRUD completo, importação de CSV e Tags.
-- **📝 Templates**: Integração com Meta (Cloud API) e Geração com IA (Gemini).
-- **📢 Campanhas**: Disparo em massa de mensagens.
-- **⚙️ Configurações**: Setup de chaves de API (Meta, Gemini, etc).
+## Stack
 
-## 📁 Estrutura de Pastas
+- **Frontend**: Next.js 16, React 19, Tailwind CSS v4, shadcn/ui + Radix.
+- **Backend**: API Routes (Next.js, runtime Node.js) + integrações externas.
+- **Banco**: Supabase (PostgreSQL).
+- **Fila/Workflows**: Upstash QStash.
+- **IA**: Vercel AI SDK v6 com suporte a Gemini/OpenAI/Anthropic.
+- **WhatsApp**: Meta WhatsApp Cloud API (Graph API v24+).
 
-```bash
-smartzapv2/
-├── app/                    # Next.js App Router (Rotas e Páginas)
-├── components/             # Componentes React (UI Shadcn + Features)
-├── lib/                    # Lógica de negócio, Serviços e Utilitários
-├── supabase/               # Migrations do Banco de dados
-├── tmp/                    # ⚠️ ARQUIVOS EXTRAS (Workflows, Testes, Docker, Docs avançados)
-└── ...
+## Arquitetura (como navegar no código)
+
+### Padrão de frontend (Page → Hook → Service → API)
+
+Em geral, as telas seguem o padrão:
+
+- `app/(dashboard)/**/page.tsx`: página “fina” que apenas conecta dados/handlers.
+- `hooks/**`: controller hooks (React Query + estado de UI).
+- `services/**`: client de API (fetch para rotas em `app/api/**`).
+- `app/api/**/route.ts`: rotas server-side (validação, DB, integrações).
+
+### Pastas principais
+
+```txt
+app/                  # Next.js App Router (páginas + API)
+components/            # UI (shadcn) e views por feature
+hooks/                 # Controller hooks (React Query)
+services/              # Camada de acesso às rotas da API
+lib/                   # Regras de negócio, utilitários e integrações
+supabase/              # Migrations/artefatos do banco
+scripts/               # Scripts utilitários (dev/ops)
 ```
 
-> **Nota:** Este template contém apenas o essencial. Funcionalidades extras e testes foram removidos para simplificação.
+## Como rodar localmente
 
-## 🛠️ Como Iniciar
+### Pré-requisitos
 
-1.  **Clone o repositório:**
-    ```bash
-    git clone https://github.com/seu-usuario/smartzap-template.git
-    cd smartzap-template
-    ```
+- Node.js 20+ (recomendado)
+- Conta no Supabase (para o banco)
+- Conta no Meta (WhatsApp Cloud API) para uso real
+- Conta no Upstash (QStash) para disparos em lote
 
-2.  **Instale as dependências:**
-    ```bash
-    npm install
-    # ou
-    pnpm install
-    ```
+### 1) Instalar dependências
 
-3.  **Configure o ambiente:**
-    - Crie um arquivo `.env.local` na raiz do projeto.
-    - Adicione as chaves básicas do Supabase (URL e Key). Você pode copiar o exemplo do arquivo `.env.example`.
+```bash
+npm install
+```
 
-4.  **Execute o projeto:**
-    ```bash
-    npm run dev
-    ```
-    Acesse: `http://localhost:3000`
+### 2) Configurar variáveis de ambiente
 
-5.  **Siga o Wizard de Configuração:**
-    Ao acessar o projeto pela primeira vez, vá até a página **Configurações** (`/settings`).
-    Um **Wizard Interativo** irá guiá-lo passo a passo para conectar:
-    - 🔴 **Redis (Upstash)**: Para filas e cache.
-    - 🟢 **WhatsApp Business API**: Para envio de mensagens.
-    - 🤖 **IA (Gemini)**: Para funcionalidades inteligentes.
+Copie o arquivo de exemplo:
 
-    > 📘 **Dica:** use o arquivo `.env.example` como referência para as variáveis necessárias.
+```bash
+cp .env.example .env.local
+```
 
-## 📦 Stack Tecnológico
+Preencha os valores no `.env.local`. O arquivo `.env.example` já descreve cada variável.
 
-- **Frontend:** Next.js 15, React 19, Tailwind CSS, Shadcn/ui.
-- **Backend:** Next.js API Routes (Serverless).
-- **Banco de Dados:** Supabase (PostgreSQL).
-- **IA:** Google Gemini (para geração de templates).
-- **Integração:** Meta WhatsApp Cloud API.
+Principais variáveis (resumo):
+
+- **Supabase**: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`
+- **WhatsApp Cloud API**: `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_BUSINESS_ACCOUNT_ID`, `WHATSAPP_VERIFY_TOKEN`
+- **Fila**: `QSTASH_TOKEN`
+- **Segurança local**: `MASTER_PASSWORD`, `SMARTZAP_API_KEY`, `SMARTZAP_ADMIN_KEY`
+- **IA (opcional)**: `GEMINI_API_KEY` (ou chaves de OpenAI/Anthropic)
+
+### 3) Subir o servidor
+
+```bash
+npm run dev
+```
+
+Abra `http://localhost:3000`.
+
+## Uso (fluxo recomendado)
+
+1. Faça login (senha definida em `MASTER_PASSWORD`).
+2. Vá em **Configurações** e conecte:
+   - Supabase (se ainda não estiver configurado)
+   - WhatsApp Cloud API
+   - QStash (para campanhas)
+   - IA (opcional)
+3. Importe contatos (CSV) ou cadastre manualmente.
+4. Sincronize/crie templates.
+5. Crie uma campanha e rode o **precheck** antes do disparo.
+
+## Comandos úteis
+
+```bash
+npm run dev
+npm run lint
+npm run build
+npm run test
+npm run test:e2e
+```
+
+## Deploy
+
+O deploy padrão é na Vercel.
+
+- Configure as variáveis de ambiente na Vercel (pode usar o wizard do app).
+- Rode build para validar: `npm run build`.
+
+## Troubleshooting
+
+### “Supabase not configured. Complete setup at /setup”
+
+As variáveis do Supabase não estão preenchidas (ou estão incorretas). Confira:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (publishable/anon)
+- `SUPABASE_SECRET_KEY` (service role/secret — backend apenas)
+
+### Erros de permissão/#200 no Meta
+
+Geralmente indica token sem permissões adequadas.
+
+### Rate limit por par (131056)
+
+Isso acontece quando o envio para o mesmo destinatário ocorre rápido demais. O projeto inclui tratamento e tempos de espera recomendados.
 
 ---
 
-**Bom estudo!** 🚀
+## Documentação interna
+
+Além deste README, veja:
+
+- `docs/GUIA_CONFIGURACAO.md`
+- `docs/guia.md`
+

@@ -153,7 +153,16 @@ export const UpdateLimitsSchema = z.object({
 // ============================================================================
 
 /**
- * Validate request body and return typed result or error response
+ * Valida um corpo de requisição (ou qualquer dado `unknown`) usando um schema Zod.
+ *
+ * Esta função é usada pelas rotas de API para:
+ * - Garantir integridade dos dados de entrada.
+ * - Retornar um resultado tipado (`T`) quando válido.
+ * - Retornar o `ZodError` quando inválido (para ser formatado/retornado na resposta).
+ *
+ * @param schema Schema Zod a ser aplicado.
+ * @param data Dado de entrada (tipicamente `await request.json()`).
+ * @returns Objeto discriminado: `{ success: true, data }` quando válido, ou `{ success: false, error }` quando inválido.
  */
 export function validateBody<T>(
   schema: z.ZodSchema<T>,
@@ -169,7 +178,14 @@ export function validateBody<T>(
 }
 
 /**
- * Format Zod errors for API response
+ * Formata um {@link z.ZodError} em um mapa de mensagens por caminho.
+ *
+ * Estrutura de retorno:
+ * - chave: caminho do campo (ex.: `contacts.0.phone`) ou `root`.
+ * - valor: lista de mensagens de validação para aquele campo.
+ *
+ * @param error Erro do Zod retornado por `safeParse`.
+ * @returns Objeto `{ [path]: string[] }` pronto para serializar na resposta da API.
  */
 export function formatZodErrors(error: z.ZodError): Record<string, string[]> {
   const formatted: Record<string, string[]> = {}

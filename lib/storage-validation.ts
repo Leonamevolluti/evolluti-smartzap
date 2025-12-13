@@ -13,17 +13,23 @@ import { logger } from './logger';
 // Base Schemas
 // ============================================================================
 
+/** Schema Zod para {@link CampaignStatus} (enum nativo). */
 export const CampaignStatusSchema = z.nativeEnum(CampaignStatus);
+/** Schema Zod para {@link ContactStatus} (enum nativo). */
 export const ContactStatusSchema = z.nativeEnum(ContactStatus);
+/** Schema Zod para {@link MessageStatus} (enum nativo). */
 export const MessageStatusSchema = z.nativeEnum(MessageStatus);
 
+/** Schema Zod para categoria de template (conjunto finito suportado pela UI/API). */
 export const TemplateCategorySchema = z.enum(['MARKETING', 'UTILIDADE', 'AUTENTICACAO']);
+/** Schema Zod para status de template retornado/armazenado pela aplicação. */
 export const TemplateStatusSchema = z.enum(['APPROVED', 'PENDING', 'REJECTED']);
 
 // ============================================================================
 // Entity Schemas
 // ============================================================================
 
+/** Schema Zod para botões de template do WhatsApp (QUICK_REPLY/URL/PHONE_NUMBER). */
 export const TemplateButtonSchema = z.object({
   type: z.enum(['QUICK_REPLY', 'URL', 'PHONE_NUMBER']),
   text: z.string(),
@@ -31,6 +37,7 @@ export const TemplateButtonSchema = z.object({
   phone_number: z.string().optional(),
 });
 
+/** Schema Zod para componentes de template (HEADER/BODY/FOOTER/BUTTONS). */
 export const TemplateComponentSchema = z.object({
   type: z.enum(['HEADER', 'BODY', 'FOOTER', 'BUTTONS']),
   format: z.enum(['TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT']).optional(),
@@ -39,6 +46,7 @@ export const TemplateComponentSchema = z.object({
   example: z.unknown().optional(),
 });
 
+/** Schema Zod para um template (visão local/armazenamento, com campos usados na UI). */
 export const TemplateSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -51,6 +59,7 @@ export const TemplateSchema = z.object({
   components: z.array(TemplateComponentSchema).optional(),
 });
 
+/** Schema Zod para uma campanha (forma persistida em storage/local). */
 export const CampaignSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -62,6 +71,7 @@ export const CampaignSchema = z.object({
   templateName: z.string(),
 });
 
+/** Schema Zod para um contato (forma persistida em storage/local). */
 export const ContactSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -71,6 +81,7 @@ export const ContactSchema = z.object({
   lastActive: z.string(),
 });
 
+/** Schema Zod para uma mensagem (forma persistida em storage/local). */
 export const MessageSchema = z.object({
   id: z.string().min(1),
   campaignId: z.string().min(1),
@@ -81,6 +92,7 @@ export const MessageSchema = z.object({
   error: z.string().optional(),
 });
 
+/** Schema Zod para configurações da aplicação (credenciais e estado de conexão). */
 export const AppSettingsSchema = z.object({
   phoneNumberId: z.string(),
   businessAccountId: z.string(),
@@ -95,9 +107,13 @@ export const AppSettingsSchema = z.object({
 // Collection Schemas
 // ============================================================================
 
+/** Schema Zod para lista de campanhas. */
 export const CampaignsArraySchema = z.array(CampaignSchema);
+/** Schema Zod para lista de contatos. */
 export const ContactsArraySchema = z.array(ContactSchema);
+/** Schema Zod para lista de templates. */
 export const TemplatesArraySchema = z.array(TemplateSchema);
+/** Schema Zod para lista de mensagens. */
 export const MessagesArraySchema = z.array(MessageSchema);
 
 // ============================================================================
@@ -111,7 +127,13 @@ export interface ZodValidationResult<T> {
 }
 
 /**
- * Validates data against a Zod schema
+ * Valida um dado desconhecido (`unknown`) contra um schema Zod.
+ *
+ * Quando a validação falha, registra um warning com as primeiras issues (path/mensagem).
+ *
+ * @param schema Schema Zod a ser aplicado.
+ * @param data Dado de entrada (tipicamente vindo de `localStorage`/API/arquivo).
+ * @returns Objeto com `success` e, em caso de sucesso, `data`; em caso de falha, `errors`.
  */
 export function validateData<T>(
   schema: z.ZodSchema<T>,
@@ -140,7 +162,12 @@ export function validateData<T>(
 }
 
 /**
- * Validates and returns data, or returns default on failure
+ * Valida um dado e retorna o valor validado; em caso de falha retorna um padrão.
+ *
+ * @param schema Schema Zod a ser aplicado.
+ * @param data Dado de entrada (unknown).
+ * @param defaultValue Valor padrão a ser retornado quando a validação falhar.
+ * @returns O dado validado (tipo `T`) ou `defaultValue`.
  */
 export function validateOrDefault<T>(
   schema: z.ZodSchema<T>,
@@ -164,28 +191,40 @@ export function validateOrDefault<T>(
 }
 
 /**
- * Validates campaigns array
+ * Valida uma lista de campanhas.
+ *
+ * @param data Dado de entrada (unknown), tipicamente vindo do storage.
+ * @returns Lista de campanhas válida; retorna `[]` se inválido.
  */
 export function validateCampaigns(data: unknown): Campaign[] {
   return validateOrDefault(CampaignsArraySchema, data, []);
 }
 
 /**
- * Validates contacts array
+ * Valida uma lista de contatos.
+ *
+ * @param data Dado de entrada (unknown), tipicamente vindo do storage.
+ * @returns Lista de contatos válida; retorna `[]` se inválido.
  */
 export function validateContacts(data: unknown): Contact[] {
   return validateOrDefault(ContactsArraySchema, data, []);
 }
 
 /**
- * Validates templates array
+ * Valida uma lista de templates.
+ *
+ * @param data Dado de entrada (unknown), tipicamente vindo do storage.
+ * @returns Lista de templates válida; retorna `[]` se inválido.
  */
 export function validateTemplates(data: unknown): Template[] {
   return validateOrDefault(TemplatesArraySchema, data, []);
 }
 
 /**
- * Validates app settings
+ * Valida as configurações da aplicação.
+ *
+ * @param data Dado de entrada (unknown), tipicamente vindo do storage.
+ * @returns Configurações válidas; retorna um objeto com valores padrão se inválido.
  */
 export function validateSettings(data: unknown): AppSettings {
   return validateOrDefault(AppSettingsSchema, data, {
@@ -213,7 +252,14 @@ export type TemplateButton = z.infer<typeof TemplateButtonSchema>;
 // ============================================================================
 
 /**
- * Safely parse JSON from localStorage with validation
+ * Lê um valor JSON do `localStorage` e valida com Zod.
+ *
+ * Em ambiente SSR (sem `window`), retorna `defaultValue`.
+ *
+ * @param key Chave do `localStorage`.
+ * @param schema Schema Zod usado na validação.
+ * @param defaultValue Valor padrão retornado quando ausente/ inválido/ erro de parse.
+ * @returns Valor validado (T) ou `defaultValue`.
  */
 export function safeParseFromStorage<T>(
   key: string,
@@ -238,7 +284,14 @@ export function safeParseFromStorage<T>(
 }
 
 /**
- * Safely save to localStorage with validation
+ * Valida e salva um valor no `localStorage` de forma segura.
+ *
+ * Em ambiente SSR (sem `window`), retorna `false`.
+ *
+ * @param key Chave do `localStorage`.
+ * @param schema Schema Zod usado para validar antes de salvar.
+ * @param data Dado a ser salvo.
+ * @returns `true` se salvou com sucesso; caso contrário `false`.
  */
 export function safeSaveToStorage<T>(
   key: string,
@@ -274,8 +327,13 @@ export function safeSaveToStorage<T>(
 // ============================================================================
 
 /**
- * Migrate and validate old storage data to new schema
- * Returns cleaned data with invalid entries removed
+ * Migra e valida dados antigos (tipicamente do storage) para um schema novo.
+ *
+ * Percorre a lista e remove entradas inválidas; registra um warning com a contagem.
+ *
+ * @param data Lista bruta (unknown[]) a migrar/validar.
+ * @param schema Schema Zod que define a nova forma do item.
+ * @returns Lista contendo apenas itens válidos (já tipados como `T`).
  */
 export function migrateAndValidate<T>(
   data: unknown[],

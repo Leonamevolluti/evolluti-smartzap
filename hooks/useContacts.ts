@@ -116,6 +116,10 @@ export const useContactsController = () => {
     staleTime: 60 * 1000
   });
 
+  const refreshCustomFields = () => {
+    queryClient.invalidateQueries({ queryKey: ['customFields'] });
+  };
+
   // --- Realtime Subscription ---
   useEffect(() => {
     const supabaseClient = getSupabaseBrowser();
@@ -511,6 +515,8 @@ export const useContactsController = () => {
     tags,
     customFields: customFieldsQuery.data || [],
     isLoading: contactsQuery.isLoading || statsQuery.isLoading || customFieldsQuery.isLoading,
+
+    refreshCustomFields,
 
     // Filters
     searchTerm,

@@ -6,10 +6,44 @@
  */
 
 export interface RateLimiter {
+  /**
+   * Solicita permissão (um "token") para executar uma ação.
+   *
+   * Caso não haja tokens disponíveis, aguarda até que o bucket seja reabastecido.
+   *
+   * @returns Uma Promise que resolve quando o token for adquirido.
+   */
   acquire(): Promise<void>;
+
+  /**
+   * Reseta o limitador, reabastecendo o bucket até a capacidade máxima.
+   *
+   * @returns Nada.
+   */
   reset(): void;
+
+  /**
+   * Informa quantos tokens (aproximadamente) estão disponíveis no momento.
+   *
+   * @returns Quantidade de tokens disponíveis.
+   */
   getTokensAvailable(): number;
+
+  /**
+   * Interrompe timers/intervalos internos.
+   *
+   * Deve ser chamado quando o limitador não for mais utilizado para evitar leaks.
+   *
+   * @returns Nada.
+   */
   stop(): void;
+
+  /**
+   * Atualiza a taxa de permissões (tokens por segundo).
+   *
+   * @param messagesPerSecond Nova taxa de mensagens/segundo.
+   * @returns Nada.
+   */
   updateRate(messagesPerSecond: number): void;
 }
 
@@ -25,8 +59,11 @@ export class TokenBucketRateLimiter implements RateLimiter {
   private refillInterval: ReturnType<typeof setInterval> | null = null;
 
   /**
-   * Creates a new rate limiter
-   * @param messagesPerSecond - Maximum messages per second (default: 80)
+   * Cria um limitador de taxa baseado em Token Bucket.
+   *
+   * A capacidade do bucket e a taxa de refill são configuradas por `messagesPerSecond`.
+   *
+   * @param messagesPerSecond Limite máximo de mensagens por segundo.
    */
   constructor(messagesPerSecond: number = DEFAULT_RATE_LIMIT) {
     // Validate rate limit
@@ -58,8 +95,9 @@ export class TokenBucketRateLimiter implements RateLimiter {
   }
 
   /**
-   * Acquires a token (waits if none available)
-   * @returns Promise that resolves when token is acquired
+   * Adquire um token (aguarda se não houver tokens disponíveis).
+   *
+   * @returns Promise que resolve quando o token é adquirido.
    */
   async acquire(): Promise<void> {
     // Wait until we have at least 1 token
@@ -71,7 +109,9 @@ export class TokenBucketRateLimiter implements RateLimiter {
   }
 
   /**
-   * Resets the limiter (fills bucket to max)
+   * Reseta o limitador (reabastece o bucket até o máximo).
+   *
+   * @returns Nada.
    */
   reset(): void {
     this.tokens = this.maxTokens;
@@ -79,16 +119,20 @@ export class TokenBucketRateLimiter implements RateLimiter {
   }
 
   /**
-   * Gets the number of available tokens
-   * @returns Number of tokens currently available
+   * Retorna o número de tokens disponíveis (arredondado para baixo).
+   *
+   * @returns Tokens atualmente disponíveis.
    */
   getTokensAvailable(): number {
     return Math.floor(this.tokens);
   }
 
   /**
-   * Stops the refill interval
-   * Call this when done using the limiter to prevent memory leaks
+   * Interrompe o intervalo de refill.
+   *
+   * Chame quando terminar de usar o limitador para evitar vazamento de memória.
+   *
+   * @returns Nada.
    */
   stop(): void {
     if (this.refillInterval) {
@@ -98,8 +142,10 @@ export class TokenBucketRateLimiter implements RateLimiter {
   }
 
   /**
-   * Updates the rate limit
-   * @param messagesPerSecond - New rate limit
+   * Atualiza o limite de taxa (mensagens por segundo).
+   *
+   * @param messagesPerSecond Novo limite de mensagens/segundo.
+   * @returns Nada.
    */
   updateRate(messagesPerSecond: number): void {
     if (messagesPerSecond < MIN_RATE_LIMIT || messagesPerSecond > MAX_RATE_LIMIT) {
@@ -127,9 +173,10 @@ export class TokenBucketRateLimiter implements RateLimiter {
 }
 
 /**
- * Creates a new rate limiter instance
- * @param messagesPerSecond - Messages per second limit
- * @returns New rate limiter instance
+ * Cria uma instância de {@link RateLimiter} com algoritmo Token Bucket.
+ *
+ * @param messagesPerSecond Limite de mensagens por segundo.
+ * @returns Instância configurada de {@link RateLimiter}.
  */
 export function createRateLimiter(messagesPerSecond: number = DEFAULT_RATE_LIMIT): RateLimiter {
   return new TokenBucketRateLimiter(messagesPerSecond);

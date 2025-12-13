@@ -9,19 +9,24 @@ import {
 } from '@/components/ui/sheet';
 import { Type } from 'lucide-react';
 import { CustomFieldsManager } from './CustomFieldsManager';
+import type { CustomFieldDefinition } from '@/types';
 
 interface CustomFieldsSheetProps {
     children?: React.ReactNode;
     open?: boolean;
     onOpenChange?: (open: boolean) => void;
     entityType?: 'contact' | 'deal';
+    onFieldCreated?: (field: CustomFieldDefinition) => void;
+    onFieldDeleted?: (id: string) => void;
 }
 
 export function CustomFieldsSheet({
     children,
     open: controlledOpen,
     onOpenChange: controlledOnOpenChange,
-    entityType = 'contact'
+    entityType = 'contact',
+    onFieldCreated,
+    onFieldDeleted
 }: CustomFieldsSheetProps) {
     const [internalOpen, setInternalOpen] = useState(false);
     const isControlled = controlledOpen !== undefined;
@@ -33,7 +38,7 @@ export function CustomFieldsSheet({
     return (
         <Sheet open={open} onOpenChange={setOpen}>
             {children && <SheetTrigger asChild>{children}</SheetTrigger>}
-            <SheetContent className="sm:max-w-md w-full overflow-y-auto bg-zinc-950 border-l border-white/10 p-0 flex flex-col sm:w-[540px]">
+            <SheetContent className="sm:max-w-md w-full overflow-y-auto bg-zinc-950 border-l border-white/10 p-0 flex flex-col sm:w-135">
                 <SheetHeader className="p-6 border-b border-white/10">
                     <SheetTitle className="text-white flex items-center gap-2">
                         <div className="p-2 bg-primary-500/10 rounded-lg text-primary-500">
@@ -46,7 +51,11 @@ export function CustomFieldsSheet({
                     </SheetDescription>
                 </SheetHeader>
 
-                <CustomFieldsManager entityType={entityType} />
+                <CustomFieldsManager
+                    entityType={entityType}
+                    onFieldCreated={onFieldCreated}
+                    onFieldDeleted={onFieldDeleted}
+                />
             </SheetContent>
         </Sheet>
     );

@@ -12,6 +12,7 @@ export default function ContactsPage() {
       stats={controller.stats}
       tags={controller.tags}
       customFields={controller.customFields}
+      onRefreshCustomFields={controller.refreshCustomFields}
       isLoading={controller.isLoading}
       searchTerm={controller.searchTerm}
       onSearchChange={controller.setSearchTerm}

@@ -44,6 +44,14 @@ type SidebarContextProps = {
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null)
 
+/**
+ * Hook para acessar o contexto do Sidebar.
+ *
+ * Deve ser usado dentro de um {@link SidebarProvider}.
+ *
+ * @returns Estado e ações do sidebar (desktop e mobile).
+ * @throws Error se chamado fora do {@link SidebarProvider}.
+ */
 function useSidebar() {
   const context = React.useContext(SidebarContext)
   if (!context) {
@@ -53,6 +61,18 @@ function useSidebar() {
   return context
 }
 
+/**
+ * Provider que encapsula o estado do Sidebar (desktop e mobile).
+ *
+ * Também instala atalho de teclado (Ctrl/Cmd + B) e persiste o estado em cookie.
+ *
+ * @param props Propriedades do wrapper.
+ * @param props.defaultOpen Estado inicial quando não controlado.
+ * @param props.open Estado controlado externamente (opcional).
+ * @param props.onOpenChange Callback para mudanças quando controlado.
+ * @param props.children Conteúdo (Sidebar + layout associado).
+ * @returns Provider renderizando `children` com contexto disponível.
+ */
 function SidebarProvider({
   defaultOpen = true,
   open: openProp,
@@ -151,6 +171,19 @@ function SidebarProvider({
   )
 }
 
+/**
+ * Componente principal do Sidebar.
+ *
+ * Em mobile, usa `Sheet` (drawer). Em desktop, suporta modos de colapso (offcanvas/icon/none)
+ * e variantes (sidebar/floating/inset).
+ *
+ * @param props Propriedades do container.
+ * @param props.side Lado (esquerda/direita).
+ * @param props.variant Variante visual.
+ * @param props.collapsible Tipo de colapso.
+ * @param props.children Conteúdo interno do sidebar.
+ * @returns Estrutura React do sidebar (mobile ou desktop).
+ */
 function Sidebar({
   side = "left",
   variant = "sidebar",
@@ -253,6 +286,14 @@ function Sidebar({
   )
 }
 
+/**
+ * Botão/trigger para abrir/fechar o sidebar.
+ *
+ * Em desktop alterna entre expandido/colapsado; em mobile abre/fecha o drawer.
+ *
+ * @param props Propriedades do botão (baseado no componente {@link Button}).
+ * @returns Um botão que alterna o estado do sidebar.
+ */
 function SidebarTrigger({
   className,
   onClick,
@@ -279,6 +320,12 @@ function SidebarTrigger({
   )
 }
 
+/**
+ * “Rail” (área clicável) para alternar o sidebar em layout desktop.
+ *
+ * @param props Props de um botão.
+ * @returns Elemento botão estilizado para a lateral do sidebar.
+ */
 function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
   const { toggleSidebar } = useSidebar()
 
@@ -304,6 +351,12 @@ function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
   )
 }
 
+/**
+ * Wrapper de conteúdo principal quando usado com variante `inset`.
+ *
+ * @param props Props de um elemento `main`.
+ * @returns Elemento `main` com estilos/slots do layout.
+ */
 function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   return (
     <main
@@ -318,6 +371,12 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   )
 }
 
+/**
+ * Campo de input estilizado para uso dentro do sidebar.
+ *
+ * @param props Propriedades do componente {@link Input}.
+ * @returns Input com estilos e slots específicos do sidebar.
+ */
 function SidebarInput({
   className,
   ...props
@@ -332,6 +391,12 @@ function SidebarInput({
   )
 }
 
+/**
+ * Cabeçalho do sidebar.
+ *
+ * @param props Props de um `div`.
+ * @returns Container para header.
+ */
 function SidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -343,6 +408,12 @@ function SidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/**
+ * Rodapé do sidebar.
+ *
+ * @param props Props de um `div`.
+ * @returns Container para footer.
+ */
 function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -354,6 +425,12 @@ function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/**
+ * Separador visual dentro do sidebar.
+ *
+ * @param props Props do componente {@link Separator}.
+ * @returns Separador com estilos específicos.
+ */
 function SidebarSeparator({
   className,
   ...props
@@ -368,6 +445,12 @@ function SidebarSeparator({
   )
 }
 
+/**
+ * Área rolável de conteúdo do sidebar.
+ *
+ * @param props Props de um `div`.
+ * @returns Container principal de conteúdo.
+ */
 function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -382,6 +465,12 @@ function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/**
+ * Grupo (seção) dentro do sidebar.
+ *
+ * @param props Props de um `div`.
+ * @returns Container de agrupamento.
+ */
 function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -391,6 +480,12 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
       {...props}
     />
   )
+    /**
+     * Rótulo/título de um grupo do sidebar.
+     *
+     * @param props Props de um `div`.
+     * @returns Elemento de label do grupo.
+     */
 }
 
 function SidebarGroupLabel({
@@ -412,6 +507,12 @@ function SidebarGroupLabel({
       {...props}
     />
   )
+    /**
+     * Ação (botão) associada a um grupo do sidebar.
+     *
+     * @param props Props do botão.
+     * @returns Botão de ação do grupo.
+     */
 }
 
 function SidebarGroupAction({
@@ -437,6 +538,12 @@ function SidebarGroupAction({
   )
 }
 
+/**
+ * Conteúdo de um grupo do sidebar.
+ *
+ * @param props Props de um `div`.
+ * @returns Container de conteúdo do grupo.
+ */
 function SidebarGroupContent({
   className,
   ...props
@@ -451,6 +558,12 @@ function SidebarGroupContent({
   )
 }
 
+/**
+ * Lista de menu do sidebar.
+ *
+ * @param props Props de um `ul`.
+ * @returns Lista `ul` com estilos do menu.
+ */
 function SidebarMenu({ className, ...props }: React.ComponentProps<"ul">) {
   return (
     <ul
@@ -462,6 +575,12 @@ function SidebarMenu({ className, ...props }: React.ComponentProps<"ul">) {
   )
 }
 
+/**
+ * Item (`li`) do menu do sidebar.
+ *
+ * @param props Props de um `li`.
+ * @returns Item do menu.
+ */
 function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
   return (
     <li
@@ -495,6 +614,14 @@ const sidebarMenuButtonVariants = cva(
   }
 )
 
+/**
+ * Botão/link do menu do sidebar.
+ *
+ * Suporta renderização via `asChild` (Radix Slot), tamanhos e estado ativo.
+ *
+ * @param props Props de um `button`/`a` dependendo do slot.
+ * @returns Elemento interativo do menu.
+ */
 function SidebarMenuButton({
   asChild = false,
   isActive = false,
@@ -545,6 +672,12 @@ function SidebarMenuButton({
   )
 }
 
+/**
+ * Ação auxiliar para um item de menu (ícone/ação secundária).
+ *
+ * @param props Props de um `button`.
+ * @returns Botão de ação do menu.
+ */
 function SidebarMenuAction({
   className,
   asChild = false,
@@ -577,6 +710,12 @@ function SidebarMenuAction({
   )
 }
 
+/**
+ * Badge/contador para item de menu.
+ *
+ * @param props Props de um `div`.
+ * @returns Badge alinhado ao item.
+ */
 function SidebarMenuBadge({
   className,
   ...props
@@ -599,6 +738,12 @@ function SidebarMenuBadge({
   )
 }
 
+/**
+ * Esqueleto (loading placeholder) de item de menu.
+ *
+ * @param props Propriedades para customização do skeleton.
+ * @returns Placeholder visual.
+ */
 function SidebarMenuSkeleton({
   className,
   showIcon = false,
@@ -637,6 +782,12 @@ function SidebarMenuSkeleton({
   )
 }
 
+/**
+ * Submenu (`ul`) dentro do menu do sidebar.
+ *
+ * @param props Props de um `ul`.
+ * @returns Lista de submenu.
+ */
 function SidebarMenuSub({ className, ...props }: React.ComponentProps<"ul">) {
   return (
     <ul
@@ -652,6 +803,12 @@ function SidebarMenuSub({ className, ...props }: React.ComponentProps<"ul">) {
   )
 }
 
+/**
+ * Item (`li`) de um submenu.
+ *
+ * @param props Props de um `li`.
+ * @returns Item do submenu.
+ */
 function SidebarMenuSubItem({
   className,
   ...props
@@ -666,6 +823,12 @@ function SidebarMenuSubItem({
   )
 }
 
+/**
+ * Botão/link de um submenu.
+ *
+ * @param props Props de um `a` (ou Slot via `asChild`).
+ * @returns Elemento interativo de submenu.
+ */
 function SidebarMenuSubButton({
   asChild = false,
   size = "md",

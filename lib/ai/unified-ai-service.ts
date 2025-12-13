@@ -1,14 +1,14 @@
 /**
- * Unified AI Service
- * 
- * Central service for all AI operations across the application.
- * Supports Google (Gemini), OpenAI (GPT), and Anthropic (Claude).
- * 
- * Built with Vercel AI SDK 6 Beta.
- * 
- * Usage:
- *   import { ai } from '@/lib/ai';
- *   const result = await ai.generateText({ prompt: 'Hello' });
+ * Serviço de IA unificado.
+ *
+ * Centraliza operações de IA na aplicação (geração e streaming), suportando
+ * provedores como Google (Gemini), OpenAI (GPT) e Anthropic (Claude).
+ *
+ * Implementado sobre o Vercel AI SDK v6.
+ *
+ * Exemplo:
+ * - `import { ai } from '@/lib/ai'`
+ * - `const result = await ai.generateText({ prompt: 'Olá' })`
  */
 
 import { generateText as vercelGenerateText, streamText as vercelStreamText } from 'ai';
@@ -35,26 +35,26 @@ export interface ChatMessage {
 }
 
 export interface GenerateTextOptions {
-    /** Simple text prompt (mutually exclusive with messages) */
+    /** Prompt simples (mutuamente exclusivo com `messages`). */
     prompt?: string;
-    /** Conversation messages (mutually exclusive with prompt) */
+    /** Mensagens da conversa (mutuamente exclusivo com `prompt`). */
     messages?: ChatMessage[];
-    /** System instruction */
+    /** Instrução de sistema (contexto) enviada ao modelo. */
     system?: string;
-    /** Override the configured provider */
+    /** Sobrescreve o provedor configurado nas settings. */
     provider?: AIProvider;
-    /** Override the configured model */
+    /** Sobrescreve o modelo configurado nas settings. */
     model?: string;
-    /** Max output tokens */
+    /** Máximo de tokens de saída. */
     maxOutputTokens?: number;
-    /** Temperature (0-2) */
+    /** Temperatura (geralmente 0-2). */
     temperature?: number;
 }
 
 export interface StreamTextOptions extends GenerateTextOptions {
-    /** Callback for each text chunk */
+    /** Callback chamado a cada chunk de texto recebido. */
     onChunk?: (chunk: string) => void;
-    /** Callback when complete */
+    /** Callback chamado quando o streaming terminar, com o texto completo. */
     onComplete?: (text: string) => void;
 }
 
@@ -133,7 +133,14 @@ async function getAISettings(): Promise<AISettings> {
     return settingsCache;
 }
 
-/** Clear settings cache (call when settings are updated) */
+/**
+ * Limpa o cache de settings de IA.
+ *
+ * Deve ser chamado após atualizar as configurações (ex.: via tela de settings)
+ * para garantir que a próxima chamada busque os valores mais recentes.
+ *
+ * @returns Nada.
+ */
 export function clearSettingsCache() {
     settingsCache = null;
     settingsCacheTime = 0;
@@ -171,7 +178,13 @@ function getLanguageModel(providerId: AIProvider, modelId: string, apiKey: strin
 // =============================================================================
 
 /**
- * Generate text using the configured AI provider
+ * Gera texto usando o provedor/modelo configurados (com opção de override).
+ *
+ * Você pode fornecer `prompt` (simples) ou `messages` (chat). Se ambos forem
+ * fornecidos, `messages` tem precedência pela lógica atual.
+ *
+ * @param options Opções de geração (prompt/mensagens, system, temperatura, etc.).
+ * @returns Objeto com `text` e metadados do provedor/modelo efetivamente usados.
  */
 export async function generateText(options: GenerateTextOptions): Promise<GenerateTextResult> {
     const settings = await getAISettings();
@@ -203,7 +216,13 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
 }
 
 /**
- * Stream text using the configured AI provider
+ * Gera texto em streaming usando o provedor/modelo configurados.
+ *
+ * Durante o streaming, chama `onChunk` para cada pedaço de texto e `onComplete`
+ * ao finalizar, além de retornar o texto completo.
+ *
+ * @param options Opções de streaming (inclui callbacks opcionais).
+ * @returns Objeto com o texto completo e metadados do provedor/modelo.
  */
 export async function streamText(options: StreamTextOptions): Promise<GenerateTextResult> {
     const settings = await getAISettings();
@@ -244,7 +263,15 @@ export async function streamText(options: StreamTextOptions): Promise<GenerateTe
 }
 
 /**
- * Generate text with JSON response
+ * Gera uma resposta em JSON via IA.
+ *
+ * Este helper adiciona uma instrução de sistema para pedir **apenas JSON válido**,
+ * e em seguida tenta fazer `JSON.parse`, removendo cercas de markdown se aparecerem.
+ *
+ * @typeParam T Tipo esperado do JSON retornado.
+ * @param options Opções de geração (prompt/mensagens e instruções opcionais).
+ * @returns Objeto JSON parseado, tipado como `T`.
+ * @throws Erro se a resposta não puder ser parseada como JSON.
  */
 export async function generateJSON<T = unknown>(options: GenerateTextOptions): Promise<T> {
     const result = await generateText({
@@ -270,6 +297,16 @@ export async function generateJSON<T = unknown>(options: GenerateTextOptions): P
 // CONVENIENCE EXPORTS
 // =============================================================================
 
+/**
+ * Facade (API amigável) para operações de IA.
+ *
+ * Inclui:
+ * - `generateText`: geração simples.
+ * - `streamText`: geração em streaming.
+ * - `generateJSON`: geração com parse para JSON.
+ * - `clearSettingsCache`: invalidação do cache.
+ * - `getSettings`: leitura das settings efetivas (com cache).
+ */
 export const ai = {
     generateText,
     streamText,

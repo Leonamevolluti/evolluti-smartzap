@@ -5,12 +5,14 @@ import { z } from 'zod';
 // =========================
 
 // 1. Quick Reply - Respostas rápidas
+/** Schema Zod para botão do tipo QUICK_REPLY (resposta rápida). */
 export const QuickReplyButtonSchema = z.object({
     type: z.literal('QUICK_REPLY'),
     text: z.string().min(1).max(25, 'Botão: máximo 25 caracteres'),
 });
 
 // 2. URL - Link para website (suporta variáveis dinâmicas)
+/** Schema Zod para botão do tipo URL (link externo), com validações de política Meta. */
 export const UrlButtonSchema = z.object({
     type: z.literal('URL'),
     text: z.string().max(25, 'Texto do botão deve ter no máximo 25 caracteres'),
@@ -23,6 +25,7 @@ export const UrlButtonSchema = z.object({
 });
 
 // 3. Phone Number - Ligar para telefone
+/** Schema Zod para botão do tipo PHONE_NUMBER (chamada telefônica). */
 export const PhoneButtonSchema = z.object({
     type: z.literal('PHONE_NUMBER'),
     text: z.string().min(1).max(25, 'Botão: máximo 25 caracteres'),
@@ -30,12 +33,14 @@ export const PhoneButtonSchema = z.object({
 });
 
 // 4. Copy Code - Copiar código (cupom, OTP)
+/** Schema Zod para botão do tipo COPY_CODE (copiar código/cupom). */
 export const CopyCodeButtonSchema = z.object({
     type: z.literal('COPY_CODE'),
     example: z.string().optional(), // Exemplo do código
 });
 
 // 5. OTP Button - Para templates de autenticação
+/** Schema Zod para botão do tipo OTP em templates de autenticação. */
 export const OtpButtonSchema = z.object({
     type: z.literal('OTP'),
     otp_type: z.enum(['COPY_CODE', 'ONE_TAP', 'ZERO_TAP']),
@@ -46,6 +51,7 @@ export const OtpButtonSchema = z.object({
 });
 
 // 6. Flow Button - WhatsApp Flows
+/** Schema Zod para botão do tipo FLOW (WhatsApp Flows). */
 export const FlowButtonSchema = z.object({
     type: z.literal('FLOW'),
     text: z.string().min(1).max(25, 'Botão: máximo 25 caracteres'),
@@ -55,24 +61,32 @@ export const FlowButtonSchema = z.object({
 });
 
 // 7. Catalog Button - Ver catálogo
+/** Schema Zod para botão do tipo CATALOG (abrir catálogo). */
 export const CatalogButtonSchema = z.object({
     type: z.literal('CATALOG'),
     text: z.string().min(1).max(25).default('Ver catálogo'),
 });
 
 // 8. MPM Button - Multi-Product Message
+/** Schema Zod para botão do tipo MPM (multi-produto). */
 export const MpmButtonSchema = z.object({
     type: z.literal('MPM'),
     text: z.string().min(1).max(25).default('Ver produtos'),
 });
 
 // 9. Voice Call Button - Chamada de voz
+/** Schema Zod para botão do tipo VOICE_CALL (chamada de voz). */
 export const VoiceCallButtonSchema = z.object({
     type: z.literal('VOICE_CALL'),
     text: z.string().min(1).max(25, 'Botão: máximo 25 caracteres'),
 });
 
 // Union de todos os tipos de botão
+/**
+ * Union discriminada (`type`) de todos os tipos de botões suportados.
+ *
+ * Use este schema ao validar listas de botões em templates.
+ */
 export const ButtonSchema = z.discriminatedUnion('type', [
     QuickReplyButtonSchema,
     UrlButtonSchema,
@@ -89,6 +103,11 @@ export const ButtonSchema = z.discriminatedUnion('type', [
 // HEADER - TODOS OS FORMATOS
 // =========================
 
+/**
+ * Schema Zod para HEADER do template.
+ *
+ * Suporta formatos: TEXT, IMAGE, VIDEO, DOCUMENT, LOCATION.
+ */
 export const HeaderSchema = z.object({
     format: z.enum(['TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT', 'LOCATION']),
     // Para TEXT
@@ -104,6 +123,7 @@ export const HeaderSchema = z.object({
 // FOOTER
 // =========================
 
+/** Schema Zod para FOOTER do template (texto curto). */
 export const FooterSchema = z.object({
     text: z.string().max(60, 'Footer: máximo 60 caracteres'),
 }).optional().nullable();
@@ -112,6 +132,11 @@ export const FooterSchema = z.object({
 // BODY
 // =========================
 
+/**
+ * Schema Zod para BODY do template.
+ *
+ * Inclui suporte a exemplos de variáveis (`body_text`).
+ */
 export const BodySchema = z.object({
     text: z.string().min(1, 'Conteúdo obrigatório').max(1024, 'Body: máximo 1024 caracteres'),
     example: z.object({
@@ -123,6 +148,7 @@ export const BodySchema = z.object({
 // CAROUSEL - Cards deslizantes
 // =========================
 
+/** Schema Zod para um card de carousel (mídia + texto + botões). */
 export const CarouselCardSchema = z.object({
     header: z.object({
         format: z.enum(['IMAGE', 'VIDEO']),
@@ -139,6 +165,7 @@ export const CarouselCardSchema = z.object({
     buttons: z.array(ButtonSchema).max(2),
 });
 
+/** Schema Zod para carousel (2 a 10 cards). */
 export const CarouselSchema = z.object({
     cards: z.array(CarouselCardSchema).min(2).max(10),
 }).optional().nullable();
@@ -147,6 +174,7 @@ export const CarouselSchema = z.object({
 // LIMITED TIME OFFER
 // =========================
 
+/** Schema Zod para Limited Time Offer (LTO) em templates de marketing. */
 export const LimitedTimeOfferSchema = z.object({
     text: z.string().max(16, 'LTO texto: máximo 16 caracteres'),
     has_expiration: z.boolean().default(true),
@@ -156,6 +184,14 @@ export const LimitedTimeOfferSchema = z.object({
 // SCHEMA PRINCIPAL
 // =========================
 
+/**
+ * Schema Zod principal para criação de template (payload vindo da UI/API).
+ *
+ * Este schema aplica:
+ * - regras de formato/nome do template;
+ * - validação de componentes (header/body/footer/buttons/carousel);
+ * - campos específicos de autenticação (TTL/expiração de código).
+ */
 export const CreateTemplateSchema = z.object({
     // Campos opcionais para update no banco
     projectId: z.string().optional(),

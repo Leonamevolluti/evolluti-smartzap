@@ -120,8 +120,14 @@ export const TEST_LIMITS: AccountLimits = {
 // ===== VALIDATION =====
 
 /**
- * Validates if a campaign can be sent based on account limits
- * This is the main function that prevents users from making mistakes
+ * Valida se uma campanha pode ser enviada com base nos limites atuais da conta.
+ *
+ * Esta é a função principal que evita que o usuário dispare campanhas acima do
+ * tier diário ou em situações com risco (ex.: qualidade baixa).
+ *
+ * @param contactCount Quantidade de contatos/destinatários pretendida.
+ * @param limits Limites atuais da conta (tier, throughput, qualidade, uso do dia).
+ * @returns Resultado de validação com `canSend`, avisos e, quando bloqueado, motivo e roadmap.
  */
 export function validateCampaign(
   contactCount: number,
@@ -209,7 +215,12 @@ export function validateCampaign(
 // ===== UPGRADE ROADMAP =====
 
 /**
- * Returns a step-by-step guide to upgrade to the next tier
+ * Retorna um guia passo a passo (roadmap) para aumentar o tier de mensagens.
+ *
+ * O roadmap varia conforme o tier atual e o score de qualidade.
+ *
+ * @param limits Limites atuais da conta.
+ * @returns Lista de passos sugeridos para upgrade.
  */
 export function getUpgradeRoadmap(limits: AccountLimits): UpgradeStep[] {
   const steps: UpgradeStep[] = [];
@@ -292,7 +303,10 @@ export function getUpgradeRoadmap(limits: AccountLimits): UpgradeStep[] {
 }
 
 /**
- * Get the next tier after the current one
+ * Retorna o próximo tier após o tier atual (na ordem de upgrade).
+ *
+ * @param currentTier Tier atual.
+ * @returns Próximo tier, ou `null` se já estiver no máximo/ desconhecido.
  */
 export function getNextTier(currentTier: MessagingTier): MessagingTier | null {
   const tierOrder: MessagingTier[] = [
@@ -310,7 +324,15 @@ export function getNextTier(currentTier: MessagingTier): MessagingTier | null {
 // ===== API FETCHING =====
 
 /**
- * Fetches current account limits from Meta's Graph API
+ * Busca os limites atuais da conta no Graph API da Meta.
+ *
+ * A consulta tenta obter em paralelo:
+ * - throughput e quality_score
+ * - messaging limit (tier)
+ *
+ * @param phoneNumberId Phone Number ID (Cloud API).
+ * @param accessToken Access Token do Meta com permissões adequadas.
+ * @returns Limites normalizados ({@link AccountLimits}); em caso de falha retorna {@link DEFAULT_LIMITS}.
  */
 export async function fetchAccountLimits(
   phoneNumberId: string,
@@ -391,7 +413,11 @@ function formatDuration(seconds: number): string {
 export const LIMITS_STORAGE_KEY = 'smartzap_account_limits';
 
 /**
- * Get cached limits from localStorage
+ * Obtém limites cacheados do `localStorage`.
+ *
+ * Em SSR (sem `window`), retorna `null`.
+ *
+ * @returns Limites cacheados, ou `null` se ausentes/ inválidos.
  */
 export function getCachedLimits(): AccountLimits | null {
   if (typeof window === 'undefined') return null;
@@ -405,7 +431,12 @@ export function getCachedLimits(): AccountLimits | null {
 }
 
 /**
- * Save limits to localStorage
+ * Salva os limites no `localStorage` para reutilização posterior.
+ *
+ * Em SSR (sem `window`), não faz nada.
+ *
+ * @param limits Limites a persistir no cache do navegador.
+ * @returns Nada.
  */
 export function cacheLimits(limits: AccountLimits): void {
   if (typeof window === 'undefined') return;
@@ -413,7 +444,10 @@ export function cacheLimits(limits: AccountLimits): void {
 }
 
 /**
- * Check if cached limits are stale (older than 1 hour)
+ * Verifica se os limites cacheados estão "stale" (mais antigos que 1 hora).
+ *
+ * @param limits Limites cacheados (ou `null`).
+ * @returns `true` se estiverem ausentes ou expirados; caso contrário `false`.
  */
 export function areLimitsStale(limits: AccountLimits | null): boolean {
   if (!limits) return true;

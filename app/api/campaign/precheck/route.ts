@@ -15,8 +15,18 @@ interface PrecheckContact {
 }
 
 /**
- * POST /api/campaign/precheck
- * Dry-run do contrato ouro: valida contatos/variáveis sem persistir nada.
+ * POST `/api/campaign/precheck`
+ *
+ * Executa um "dry-run" (pré-validação) do disparo de campanha:
+ * - valida existência do template no banco local;
+ * - valida e normaliza telefones;
+ * - verifica variáveis obrigatórias do template (contrato) para cada contato;
+ *
+ * Não persiste dados e não envia mensagens — serve apenas para feedback rápido na UI.
+ *
+ * @param request Requisição Next.js contendo JSON com `templateName`, `contacts` e `templateVariables`.
+ * @returns `NextResponse.json` com `{ ok, templateName, totals, results }` em caso de sucesso;
+ * ou erro com status 400/500.
  */
 export async function POST(request: NextRequest) {
   try {

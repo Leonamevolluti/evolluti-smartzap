@@ -22,15 +22,33 @@ interface ErrorBoundaryState {
 }
 
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  /**
+   * Cria um Error Boundary para capturar exceções em tempo de renderização dos filhos.
+   *
+   * @param props Propriedades do componente (children, fallback opcional e callback `onError`).
+   */
   constructor(props: ErrorBoundaryProps) {
     super(props)
     this.state = { hasError: false, error: null, errorInfo: null }
   }
 
+  /**
+   * Atualiza o estado quando um erro acontece em algum componente descendente.
+   *
+   * @param error Erro lançado durante renderização/commit.
+   * @returns Um parcial do estado, marcando `hasError` e guardando o erro.
+   */
   static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
     return { hasError: true, error }
   }
 
+  /**
+   * Hook do React chamado após capturar um erro em um componente filho.
+   *
+   * @param error Erro capturado.
+   * @param errorInfo Informações adicionais (component stack).
+   * @returns Nada.
+   */
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     this.setState({ errorInfo })
     this.props.onError?.(error, errorInfo)
@@ -43,18 +61,38 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     })
   }
 
+  /**
+   * Reseta o estado do boundary e tenta renderizar novamente os filhos.
+   *
+   * @returns Nada.
+   */
   handleReset = (): void => {
     this.setState({ hasError: false, error: null, errorInfo: null })
   }
 
+  /**
+   * Recarrega a página atual.
+   *
+   * @returns Nada.
+   */
   handleReload = (): void => {
     window.location.reload()
   }
 
+  /**
+   * Redireciona para a home (`/`).
+   *
+   * @returns Nada.
+   */
   handleGoHome = (): void => {
     window.location.href = '/'
   }
 
+  /**
+   * Renderiza os filhos normalmente ou a UI de fallback quando `hasError`.
+   *
+   * @returns Elemento React com children ou fallback.
+   */
   render(): ReactNode {
     if (this.state.hasError) {
       if (this.props.fallback) {
@@ -136,9 +174,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 }
 
 /**
- * Page Error Boundary
- * 
- * Versão especializada para páginas inteiras
+ * Error Boundary de alto nível para envolver páginas inteiras.
+ *
+ * Útil para evitar que uma exceção em qualquer componente da página derrube
+ * toda a navegação; permite também plugar monitoramento (ex.: Sentry).
+ *
+ * @param props Propriedades do componente.
+ * @param props.children Conteúdo da página.
+ * @returns Componente {@link ErrorBoundary} envolvendo `children`.
  */
 export function PageErrorBoundary({ children }: { children: ReactNode }) {
   return (
