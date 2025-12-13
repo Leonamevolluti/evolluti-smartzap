@@ -157,6 +157,23 @@ type NavigateFn = (path: string, options?: { replace?: boolean }) => void;
 interface CampaignDetailsViewProps {
   campaign?: Campaign;
   messages: Message[];
+  messageStats?: {
+    total: number;
+    pending: number;
+    sent: number;
+    delivered: number;
+    read: number;
+    skipped: number;
+    failed: number;
+  } | null;
+  realStats?: {
+    sent: number;
+    failed: number;
+    skipped: number;
+    delivered: number;
+    read: number;
+    total: number;
+  } | null;
   isLoading: boolean;
   searchTerm: string;
   setSearchTerm: (term: string) => void;
@@ -185,6 +202,8 @@ interface CampaignDetailsViewProps {
 export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
   campaign,
   messages,
+  messageStats,
+  realStats,
   isLoading,
   searchTerm,
   setSearchTerm,
@@ -212,6 +231,10 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
   const [quickEditFocus, setQuickEditFocus] = useState<any>(null);
 
   if (isLoading || !campaign) return <div className="p-10 text-center text-gray-500">Carregando...</div>;
+
+  // Preferimos stats do backend (paginado), mas fazemos fallback para contagem local
+  // porque em alguns ambientes o contador da campanha pode ficar desatualizado.
+  const skippedCount = (messageStats?.skipped ?? realStats?.skipped ?? campaign.skipped ?? 0);
 
   // Format scheduled time for display
   const scheduledTimeDisplay = campaign.scheduledAt
@@ -318,7 +341,7 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
           )}
 
           {/* Resend skipped */}
-          {!!(campaign.skipped ?? 0) && (campaign.skipped ?? 0) > 0 && (
+          {skippedCount > 0 && (
             <button
               onClick={onResendSkipped}
               disabled={!onResendSkipped || !!isResendingSkipped}
@@ -326,7 +349,7 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
               title="Revalida contatos ignorados e reenfileira apenas os válidos"
             >
               {isResendingSkipped ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />}
-              {isResendingSkipped ? 'Reenviando...' : `Reenviar ignorados (${campaign.skipped ?? 0})`}
+              {isResendingSkipped ? 'Reenviando...' : `Reenviar ignorados (${skippedCount})`}
             </button>
           )}
 
@@ -367,7 +390,7 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
         />
         <DetailCard
           title="Ignoradas"
-          value={(campaign.skipped ?? 0).toLocaleString()}
+          value={skippedCount.toLocaleString()}
           subvalue="Variáveis/telefones inválidos (pré-check)"
           icon={Ban}
           color="#f59e0b"

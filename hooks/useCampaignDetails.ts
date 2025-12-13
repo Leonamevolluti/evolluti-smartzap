@@ -77,6 +77,11 @@ export const useCampaignDetailsController = () => {
     return data.messages || [];
   }, [messagesQuery.data]);
 
+  const messageStats = useMemo(() => {
+    const data = messagesQuery.data;
+    return data?.stats || null;
+  }, [messagesQuery.data]);
+
   // Manual refresh function
   const refetch = async () => {
     setIsRefreshing(true);
@@ -208,6 +213,7 @@ export const useCampaignDetailsController = () => {
     setSearchTerm,
     navigate,
     realStats,
+    messageStats,
     // Realtime status
     isRealtimeConnected,
     shouldShowRefreshButton,
