@@ -110,7 +110,10 @@ export const contactService = {
     };
   },
 
-  update: async (id: string, data: Partial<Omit<Contact, 'id'>>): Promise<Contact | undefined> => {
+  update: async (
+    id: string,
+    data: (Partial<Omit<Contact, 'id'>> & { email?: string | null })
+  ): Promise<Contact | undefined> => {
     if (data.phone) {
       const { normalized, validation } = processPhoneNumber(data.phone);
       if (!validation.isValid) {

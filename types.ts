@@ -96,7 +96,7 @@ export interface Contact {
   id: string;
   name?: string;
   phone: string;
-  email?: string;
+  email?: string | null;
   status: ContactStatus;
   tags: string[];
   lastActive: string;

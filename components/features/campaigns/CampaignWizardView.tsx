@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,6 +49,7 @@ import { getPricingBreakdown } from '../../../lib/whatsapp-pricing';
 import { useExchangeRate } from '../../../hooks/useExchangeRate';
 import { WhatsAppPhonePreview } from '@/components/ui/WhatsAppPhonePreview';
 import { CampaignValidation, AccountLimits, TIER_DISPLAY_NAMES, getNextTier, TIER_LIMITS, getUpgradeRoadmap, UpgradeStep } from '../../../lib/meta-limits';
+import type { MissingParamDetail } from '@/lib/whatsapp/template-contract';
 
 // Helper Icon
 const CheckCircleFilled = ({ size }: { size: number }) => (
@@ -85,7 +86,7 @@ interface CampaignWizardViewProps {
     totals: { total: number; valid: number; skipped: number };
     results: Array<
       | { ok: true; contactId?: string; name: string; phone: string; normalizedPhone: string }
-      | { ok: false; contactId?: string; name: string; phone: string; normalizedPhone?: string; skipCode: string; reason: string }
+      | { ok: false; contactId?: string; name: string; phone: string; normalizedPhone?: string; skipCode: string; reason: string; missing?: MissingParamDetail[] }
     >;
   } | null;
   isPrechecking?: boolean;
@@ -452,6 +453,11 @@ export const CampaignWizardView: React.FC<CampaignWizardViewProps> = ({
   isOverLimit = false,
   currentLimit = 250
 }) => {
+  type QuickEditFocus =
+    | { type: 'email' }
+    | { type: 'custom_field'; key: string }
+    | null;
+
   // State for upgrade modal
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
@@ -466,7 +472,19 @@ export const CampaignWizardView: React.FC<CampaignWizardViewProps> = ({
   const [isFieldsSheetOpen, setIsFieldsSheetOpen] = useState(false);
 
   const [quickEditContactId, setQuickEditContactId] = useState<string | null>(null);
-  const [quickEditFocus, setQuickEditFocus] = useState<any>(null);
+  const [quickEditFocus, setQuickEditFocus] = useState<QuickEditFocus>(null);
+  const quickEditFocusRef = useRef<QuickEditFocus>(null);
+  const setQuickEditFocusSafe = (focus: QuickEditFocus) => {
+    quickEditFocusRef.current = focus;
+    setQuickEditFocus(focus);
+  };
+
+  // Assistente de correção em lote (contatos ignorados)
+  const [batchFixQueue, setBatchFixQueue] = useState<Array<{ contactId: string; focus: QuickEditFocus }>>([]);
+  const [batchFixIndex, setBatchFixIndex] = useState(0);
+  const batchCloseReasonRef = useRef<'advance' | 'finish' | null>(null);
+  const batchNextRef = useRef<{ contactId: string; focus: QuickEditFocus } | null>(null);
+
   const [templateSearch, setTemplateSearch] = useState('');
   const [hoveredTemplateId, setHoveredTemplateId] = useState<string | null>(null);
 
@@ -530,25 +548,18 @@ export const CampaignWizardView: React.FC<CampaignWizardViewProps> = ({
     return `variável ${key}`;
   };
 
-  type MissingParam = {
-    where: 'header' | 'body' | 'button';
-    key: string;
-    buttonIndex?: number;
-    raw: string;
-  };
-
-  const missingParams = useMemo<MissingParam[]>(() => {
+  const missingParams = useMemo<MissingParamDetail[]>(() => {
     const results = (precheckResult as any)?.results as any[] | undefined;
     if (!results || !Array.isArray(results)) return [];
 
-    const out: MissingParam[] = [];
-    const parseReason = (reason: string): MissingParam[] => {
+    const out: MissingParamDetail[] = [];
+    const parseReason = (reason: string): MissingParamDetail[] => {
       if (!reason || typeof reason !== 'string') return [];
       if (!reason.includes('Variáveis obrigatórias sem valor:')) return [];
 
       const tail = reason.split('Variáveis obrigatórias sem valor:')[1] || '';
       const parts = tail.split(',').map(s => s.trim()).filter(Boolean);
-      const parsed: MissingParam[] = [];
+      const parsed: MissingParamDetail[] = [];
 
       for (const p of parts) {
         // button:0:1 (raw="{{email}}")
@@ -569,6 +580,25 @@ export const CampaignWizardView: React.FC<CampaignWizardViewProps> = ({
     for (const r of results) {
       if (r?.ok) continue;
       if (r?.skipCode !== 'MISSING_REQUIRED_PARAM') continue;
+
+      const missing = r?.missing;
+      if (Array.isArray(missing) && missing.length > 0) {
+        out.push(
+          ...missing
+            .map((m: any) => {
+              if (!m) return null;
+              const where = m.where as MissingParamDetail['where'];
+              const key = String(m.key ?? '');
+              const raw = String(m.raw ?? '');
+              const buttonIndex = m.buttonIndex === undefined ? undefined : Number(m.buttonIndex);
+              if (!where || !key) return null;
+              return { where, key, raw, ...(where === 'button' ? { buttonIndex } : {}) } as MissingParamDetail;
+            })
+            .filter((x): x is MissingParamDetail => x !== null)
+        );
+        continue;
+      }
+
       const reason = String(r?.reason || '');
       out.push(...parseReason(reason));
     }
@@ -577,7 +607,7 @@ export const CampaignWizardView: React.FC<CampaignWizardViewProps> = ({
   }, [precheckResult]);
 
   const missingSummary = useMemo(() => {
-    const map = new Map<string, { where: MissingParam['where']; key: string; buttonIndex?: number; count: number; rawSamples: Set<string> }>();
+    const map = new Map<string, { where: MissingParamDetail['where']; key: string; buttonIndex?: number; count: number; rawSamples: Set<string> }>();
     for (const m of missingParams) {
       const id = m.where === 'button' ? `button:${m.buttonIndex}:${m.key}` : `${m.where}:${m.key}`;
       const cur = map.get(id) || { where: m.where, key: m.key, buttonIndex: m.buttonIndex, count: 0, rawSamples: new Set<string>() };
@@ -588,6 +618,54 @@ export const CampaignWizardView: React.FC<CampaignWizardViewProps> = ({
 
     return Array.from(map.values()).sort((a, b) => b.count - a.count);
   }, [missingParams]);
+
+  const batchFixCandidates = useMemo(() => {
+    const results = (precheckResult as any)?.results as any[] | undefined;
+    if (!results || !Array.isArray(results)) return [] as Array<{ contactId: string; focus: QuickEditFocus }>;
+
+    const out: Array<{ contactId: string; focus: QuickEditFocus }> = [];
+    const seen = new Set<string>();
+
+    for (const r of results) {
+      if (!r || r.ok) continue;
+      if (r.skipCode !== 'MISSING_REQUIRED_PARAM') continue;
+      if (!r.contactId) continue;
+
+      const missing = (r.missing as MissingParamDetail[] | undefined) || [];
+
+      let focus: QuickEditFocus = null;
+      for (const m of missing) {
+        const inferred = humanizeVarSource(String(m.raw || '<vazio>'), customFieldLabelByKey);
+        const f = (inferred.focus || null) as any;
+        if (f) {
+          focus = f;
+          break;
+        }
+      }
+
+      if (!focus) {
+        const h = humanizePrecheckReason(String(r.reason || ''), { customFieldLabelByKey });
+        focus = (h.focus as any) || null;
+      }
+
+      if (!focus) continue;
+
+      const contactId = String(r.contactId);
+      if (seen.has(contactId)) continue;
+      seen.add(contactId);
+      out.push({ contactId, focus });
+    }
+
+    return out;
+  }, [precheckResult, customFieldLabelByKey]);
+
+  const startBatchFix = () => {
+    if (!batchFixCandidates.length) return;
+    setBatchFixQueue(batchFixCandidates);
+    setBatchFixIndex(0);
+    setQuickEditContactId(batchFixCandidates[0].contactId);
+    setQuickEditFocusSafe(batchFixCandidates[0].focus);
+  };
 
   const applyQuickFill = (slot: { where: 'header' | 'body' | 'button'; key: string; buttonIndex?: number }, value: string) => {
     if (slot.where === 'header') {
@@ -1517,26 +1595,43 @@ export const CampaignWizardView: React.FC<CampaignWizardViewProps> = ({
                       <h3 className="text-sm font-bold text-white">Pré-check de destinatários</h3>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handlePrecheck()}
-                      disabled={!!isPrechecking}
-                      className={`px-4 py-2 rounded-lg text-sm font-bold border transition-colors flex items-center gap-2 ${isPrechecking
-                        ? 'bg-zinc-800 border-white/10 text-gray-400'
-                        : 'bg-white text-black border-white hover:bg-gray-200'
-                        }`}
-                      title="Valida telefones + variáveis do template sem criar campanha"
-                    >
-                      {isPrechecking ? (
-                        <>
-                          <RefreshCw size={14} className="animate-spin" /> Validando...
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle size={14} /> Validar agora
-                        </>
+                    <div className="flex items-center gap-2">
+                      {batchFixCandidates.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={startBatchFix}
+                          disabled={!!isPrechecking || !!quickEditContactId}
+                          className={`px-4 py-2 rounded-lg text-sm font-bold border transition-colors flex items-center gap-2 ${!!isPrechecking || !!quickEditContactId
+                            ? 'bg-zinc-800 border-white/10 text-gray-500'
+                            : 'bg-primary-600 text-white border-primary-500/40 hover:bg-primary-500'
+                            }`}
+                          title="Corrigir contatos ignorados em sequência (sem sair da campanha)"
+                        >
+                          <Wand2 size={14} /> Corrigir em lote ({batchFixCandidates.length})
+                        </button>
                       )}
-                    </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handlePrecheck()}
+                        disabled={!!isPrechecking}
+                        className={`px-4 py-2 rounded-lg text-sm font-bold border transition-colors flex items-center gap-2 ${isPrechecking
+                          ? 'bg-zinc-800 border-white/10 text-gray-400'
+                          : 'bg-white text-black border-white hover:bg-gray-200'
+                          }`}
+                        title="Valida telefones + variáveis do template sem criar campanha"
+                      >
+                        {isPrechecking ? (
+                          <>
+                            <RefreshCw size={14} className="animate-spin" /> Validando...
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle size={14} /> Validar agora
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
 
                   {precheckResult?.totals && (
@@ -1594,7 +1689,6 @@ export const CampaignWizardView: React.FC<CampaignWizardViewProps> = ({
                                         <DropdownMenuLabel className="text-xs text-gray-500 uppercase tracking-wider px-2 py-1.5">
                                           Dados do Contato
                                         </DropdownMenuLabel>
-                          <CheckCircle size={14} /> Revalidar
                                         <DropdownMenuItem
                                           className="text-sm cursor-pointer hover:bg-zinc-800 focus:bg-zinc-800 px-2 py-1.5 rounded-sm flex items-center gap-2 outline-none"
                                           onClick={() => applyQuickFill({ where: m.where, key: m.key, buttonIndex: m.buttonIndex }, '{{nome}}')}
@@ -1691,9 +1785,15 @@ export const CampaignWizardView: React.FC<CampaignWizardViewProps> = ({
                                           <button
                                             type="button"
                                             onClick={() => {
+                                              // se o usuário abriu manualmente, encerra qualquer lote
+                                              setBatchFixQueue([]);
+                                              setBatchFixIndex(0);
+                                              batchNextRef.current = null;
+                                              batchCloseReasonRef.current = null;
+
                                               const h = humanizePrecheckReason(String(r.reason || r.skipCode || ''), { customFieldLabelByKey });
                                               setQuickEditContactId(r.contactId);
-                                              setQuickEditFocus(h.focus || null);
+                                              setQuickEditFocusSafe((h.focus as any) || null);
                                             }}
                                             className="text-primary-400 hover:text-primary-300 underline underline-offset-2"
                                           >
@@ -1720,12 +1820,55 @@ export const CampaignWizardView: React.FC<CampaignWizardViewProps> = ({
                 <ContactQuickEditModal
                   isOpen={!!quickEditContactId}
                   contactId={quickEditContactId}
+                  onSaved={() => {
+                    if (!batchFixQueue.length) return;
+
+                    const next = batchFixQueue[batchFixIndex + 1];
+                    if (next) {
+                      batchNextRef.current = next;
+                      batchCloseReasonRef.current = 'advance';
+                      setBatchFixIndex((i) => i + 1);
+                      return;
+                    }
+
+                    batchNextRef.current = null;
+                    batchCloseReasonRef.current = 'finish';
+                  }}
                   onClose={() => {
+                    const reason = batchCloseReasonRef.current;
+                    batchCloseReasonRef.current = null;
+
+                    if (reason === 'advance') {
+                      const next = batchNextRef.current;
+                      batchNextRef.current = null;
+                      if (next) {
+                        setQuickEditContactId(next.contactId);
+                        setQuickEditFocusSafe(next.focus);
+                        return;
+                      }
+                    }
+
+                    if (reason === 'finish') {
+                      // encerra lote e revalida
+                      setBatchFixQueue([]);
+                      setBatchFixIndex(0);
+                      setQuickEditContactId(null);
+                      setQuickEditFocusSafe(null);
+                      void Promise.resolve(handlePrecheck());
+                      return;
+                    }
+
+                    // fechamento manual/cancelamento
+                    setBatchFixQueue([]);
+                    setBatchFixIndex(0);
+                    batchNextRef.current = null;
                     setQuickEditContactId(null);
-                    setQuickEditFocus(null);
+                    setQuickEditFocusSafe(null);
                   }}
                   focus={quickEditFocus}
-                  title="Corrigir contato"
+                  title={batchFixQueue.length > 0
+                    ? `Corrigir contato (${Math.min(batchFixIndex + 1, batchFixQueue.length)} de ${batchFixQueue.length})`
+                    : 'Corrigir contato'}
                 />
 
                 {/* Scheduling Options */}

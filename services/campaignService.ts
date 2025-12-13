@@ -1,4 +1,5 @@
 import { Campaign, CampaignStatus, Message, MessageStatus } from '../types';
+import type { MissingParamDetail } from '../lib/whatsapp/template-contract';
 
 interface CreateCampaignInput {
   name: string;
@@ -61,7 +62,16 @@ export interface CampaignPrecheckResult {
   totals: { total: number; valid: number; skipped: number };
   results: Array<
     | { ok: true; contactId?: string; name: string; phone: string; normalizedPhone: string }
-    | { ok: false; contactId?: string; name: string; phone: string; normalizedPhone?: string; skipCode: string; reason: string }
+    | {
+        ok: false;
+        contactId?: string;
+        name: string;
+        phone: string;
+        normalizedPhone?: string;
+        skipCode: string;
+        reason: string;
+        missing?: MissingParamDetail[];
+      }
   >;
 }
 

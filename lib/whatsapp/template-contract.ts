@@ -80,11 +80,19 @@ export interface PrecheckResult {
   values: ResolvedTemplateValues
 }
 
+export type MissingParamDetail = {
+  where: 'header' | 'body' | 'button'
+  key: string
+  buttonIndex?: number
+  raw: string
+}
+
 export interface PrecheckFailure {
   ok: false
   skipCode: SkipCode
   reason: string
   normalizedPhone?: string
+  missing?: MissingParamDetail[]
 }
 
 function isBlank(value: unknown): boolean {
@@ -376,14 +384,21 @@ export function precheckContactForTemplate(
     // buttons dynamic is forbidden for named, so nothing to resolve
   }
 
-  const missing = requiredParams
+  const missingDetails: MissingParamDetail[] = requiredParams
     .filter(p => isBlank(p.resolved))
     .map(p => {
       if (p.where === 'button') {
-        return `button:${p.buttonIndex}:${p.key} (raw="${fmtRaw(p.raw)}")`
+        return { where: 'button', buttonIndex: p.buttonIndex, key: p.key, raw: fmtRaw(p.raw) }
       }
-      return `${p.where}:${p.key} (raw="${fmtRaw(p.raw)}")`
+      return { where: p.where, key: p.key, raw: fmtRaw(p.raw) }
     })
+
+  const missing = missingDetails.map((p) => {
+    if (p.where === 'button') {
+      return `button:${p.buttonIndex}:${p.key} (raw="${p.raw}")`
+    }
+    return `${p.where}:${p.key} (raw="${p.raw}")`
+  })
 
   if (missing.length) {
     return {
@@ -391,6 +406,7 @@ export function precheckContactForTemplate(
       skipCode: 'MISSING_REQUIRED_PARAM',
       reason: `Variáveis obrigatórias sem valor: ${missing.join(', ')}`,
       normalizedPhone,
+      missing: missingDetails,
     }
   }
 

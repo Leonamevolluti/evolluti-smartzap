@@ -40,6 +40,10 @@ describe('template-contract precheckContactForTemplate', () => {
     // Observabilidade: deve indicar exatamente a posição + token cru.
     expect(res.reason).toContain('body:1')
     expect(res.reason).toContain('raw="{{email}}"')
+
+    // Estruturado: útil para UI apontar exatamente o que falta
+    expect(res.missing).toBeTruthy()
+    expect(res.missing?.[0]).toMatchObject({ where: 'body', key: '1', raw: '{{email}}' })
   })
 
   it('deve passar quando token resolve com valor (ex: {{email}} presente)', () => {

@@ -9,6 +9,29 @@ import type { Contact, CustomFieldDefinition } from '@/types';
 import { contactService } from '@/services';
 import { customFieldService } from '@/services/customFieldService';
 
+type ContactsCache = { list: Contact[]; byId: Record<string, Contact> };
+
+type ContactUpdatePayload = Partial<Omit<Contact, 'id' | 'email'>> & {
+  email?: string | null;
+};
+
+const normalizeEmailForUpdate = (email: string) => {
+  const trimmed = (email ?? '').trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const sanitizeCustomFieldsForUpdate = (fields?: Record<string, any>) => {
+  if (!fields) return fields;
+  const out: Record<string, any> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined) continue;
+    if (value === null) continue;
+    if (typeof value === 'string' && value.trim() === '') continue;
+    out[key] = value;
+  }
+  return out;
+};
+
 type FocusTarget =
   | { type: 'email' }
   | { type: 'custom_field'; key: string }
@@ -20,6 +43,7 @@ interface ContactQuickEditModalProps {
   onClose: () => void;
   focus?: FocusTarget;
   title?: string;
+  onSaved?: () => void;
 }
 
 export const ContactQuickEditModal: React.FC<ContactQuickEditModalProps> = ({
@@ -28,6 +52,7 @@ export const ContactQuickEditModal: React.FC<ContactQuickEditModalProps> = ({
   onClose,
   focus = null,
   title = 'Editar contato',
+  onSaved,
 }) => {
   const queryClient = useQueryClient();
   const emailRef = useRef<HTMLInputElement | null>(null);
@@ -93,18 +118,54 @@ export const ContactQuickEditModal: React.FC<ContactQuickEditModalProps> = ({
   }, [isOpen, focus]);
 
   const updateMutation = useMutation({
-    mutationFn: async (payload: { id: string; data: Partial<Omit<Contact, 'id'>> }) => {
+    mutationFn: async (payload: { id: string; data: ContactUpdatePayload }) => {
       const updated = await contactService.update(payload.id, payload.data);
       if (!updated) throw new Error('Falha ao atualizar contato');
       return updated;
+    },
+    onMutate: async ({ id, data }) => {
+      await queryClient.cancelQueries({ queryKey: ['contacts'] });
+      if (contactId) await queryClient.cancelQueries({ queryKey: ['contact', contactId] });
+
+      const previousContacts = queryClient.getQueryData<ContactsCache>(['contacts']);
+      const previousContact = contactId
+        ? queryClient.getQueryData<Contact>(['contact', contactId])
+        : undefined;
+
+      // Patch lista/cache principal
+      queryClient.setQueryData<ContactsCache>(['contacts'], (current) => {
+        if (!current) return current;
+        const existing = current.byId[id];
+        if (!existing) return current;
+        const patched: Contact = {
+          ...existing,
+          ...data,
+          updatedAt: new Date().toISOString(),
+        };
+        const nextList = current.list.map((c) => (c.id === id ? patched : c));
+        return { list: nextList, byId: { ...current.byId, [id]: patched } };
+      });
+
+      // Patch cache de detalhe
+      if (contactId) {
+        queryClient.setQueryData<Contact>(['contact', contactId], (current) => {
+          if (!current) return current;
+          return { ...current, ...data, updatedAt: new Date().toISOString() };
+        });
+      }
+
+      return { previousContacts, previousContact };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['contacts'] });
       if (contactId) queryClient.invalidateQueries({ queryKey: ['contact', contactId] });
       toast.success('Contato atualizado');
+      onSaved?.();
       onClose();
     },
-    onError: (e: any) => {
+    onError: (e: any, _vars, context) => {
+      if (context?.previousContacts) queryClient.setQueryData(['contacts'], context.previousContacts);
+      if (contactId && context?.previousContact) queryClient.setQueryData(['contact', contactId], context.previousContact);
       toast.error(e?.message || 'Falha ao atualizar contato');
     },
   });
@@ -233,12 +294,14 @@ export const ContactQuickEditModal: React.FC<ContactQuickEditModalProps> = ({
               <button
                 onClick={() => {
                   if (!contactId) return;
+                  const sanitizedCustomFields = sanitizeCustomFieldsForUpdate(form.custom_fields);
                   updateMutation.mutate({
                     id: contactId,
                     data: {
                       name: form.name || undefined,
-                      email: form.email || undefined,
-                      custom_fields: form.custom_fields,
+                      // Para “apagar” email, precisamos enviar null (undefined não altera no banco)
+                      email: normalizeEmailForUpdate(form.email),
+                      custom_fields: sanitizedCustomFields,
                     },
                   });
                 }}

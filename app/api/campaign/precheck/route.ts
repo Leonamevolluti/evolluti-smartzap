@@ -73,6 +73,7 @@ export async function POST(request: NextRequest) {
         normalizedPhone: precheck.normalizedPhone,
         skipCode: precheck.skipCode,
         reason: precheck.reason,
+        missing: precheck.missing,
       }
     })
 

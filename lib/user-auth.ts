@@ -29,6 +29,13 @@ const SESSION_MAX_AGE = 60 * 60 * 24 * 7 // 7 days in seconds
 const MAX_LOGIN_ATTEMPTS = 5
 const LOCKOUT_DURATION = 15 * 60 * 1000 // 15 minutes
 
+// Novo formato: múltiplas sessões simultâneas (evita invalidação entre domínios/devices)
+// Persistido em `settings.key = 'session_tokens'` como JSON.
+type StoredSession = {
+  token: string
+  createdAt: string
+}
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -88,6 +95,45 @@ async function deleteSetting(key: string): Promise<void> {
   if (error) {
     throw new Error(`Falha ao remover setting "${key}": ${error.message}`)
   }
+}
+
+function parseStoredSessions(raw: string): StoredSession[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+
+    const sessions: StoredSession[] = []
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue
+      const token = (item as any).token
+      const createdAt = (item as any).createdAt
+      if (typeof token !== 'string' || token.length < 10) continue
+      if (typeof createdAt !== 'string' || !createdAt) continue
+      sessions.push({ token, createdAt })
+    }
+    return sessions
+  } catch {
+    return []
+  }
+}
+
+function pruneExpiredSessions(sessions: StoredSession[], now: Date): StoredSession[] {
+  const maxAgeMs = SESSION_MAX_AGE * 1000
+  return sessions.filter(s => {
+    const created = new Date(s.createdAt)
+    if (Number.isNaN(created.getTime())) return false
+    return now.getTime() - created.getTime() <= maxAgeMs
+  })
+}
+
+async function getStoredSessions(): Promise<StoredSession[] | null> {
+  const setting = await getSetting('session_tokens')
+  if (!setting?.value) return null
+  return parseStoredSessions(setting.value)
+}
+
+async function setStoredSessions(sessions: StoredSession[]): Promise<void> {
+  await upsertSetting('session_tokens', JSON.stringify(sessions))
 }
 
 /**
@@ -342,7 +388,27 @@ export async function loginUser(password: string): Promise<UserAuthResult> {
  */
 export async function logoutUser(): Promise<void> {
   const cookieStore = await cookies()
+
+  const sessionToken = cookieStore.get(SESSION_COOKIE_NAME)?.value
   cookieStore.delete(SESSION_COOKIE_NAME)
+
+  // Best-effort: remove o token atual da lista de sessões para revogar imediatamente.
+  if (sessionToken) {
+    try {
+      const now = new Date()
+      const stored = await getStoredSessions()
+      if (stored) {
+        const pruned = pruneExpiredSessions(stored, now)
+        const filtered = pruned.filter(s => s.token !== sessionToken)
+        // Só grava se houver mudança.
+        if (filtered.length !== pruned.length) {
+          await setStoredSessions(filtered.slice(-50))
+        }
+      }
+    } catch {
+      // Não bloqueia logout
+    }
+  }
 }
 
 // ============================================================================
@@ -356,7 +422,18 @@ async function createSession(): Promise<void> {
   const cookieStore = await cookies()
   const sessionToken = crypto.randomUUID()
 
-  // Store session in database
+  const nowIso = new Date().toISOString()
+
+  // Store session in database (multi-session)
+  // Mantém múltiplos tokens ativos para evitar invalidação entre domínios/devices.
+  const existing = await getStoredSessions()
+  const now = new Date()
+  const pruned = pruneExpiredSessions(existing || [], now)
+  const nextSessions = [...pruned, { token: sessionToken, createdAt: nowIso }].slice(-50)
+  await setStoredSessions(nextSessions)
+
+  // Backward-compat: ainda grava o token legado para instâncias antigas (se houver).
+  // Não usamos mais esse campo para validar quando `session_tokens` existe.
   await upsertSetting('session_token', sessionToken)
 
   // Set cookie
@@ -379,7 +456,28 @@ export async function validateSession(): Promise<boolean> {
 
     if (!sessionToken) return false
 
-    // Check if token matches stored session
+    const now = new Date()
+
+    // Prefer multi-session list when available
+    const storedSessions = await getStoredSessions()
+    if (storedSessions) {
+      const pruned = pruneExpiredSessions(storedSessions, now)
+      const found = pruned.some(s => s.token === sessionToken)
+
+      // Best-effort: se havia sessões expiradas, compacta a lista.
+      if (pruned.length !== storedSessions.length) {
+        try {
+          await setStoredSessions(pruned.slice(-50))
+        } catch {
+          // ignore
+        }
+      }
+
+      if (!found) return false
+      return true
+    }
+
+    // Legacy fallback: single token
     const setting = await getSetting('session_token')
     if (!setting) return false
 
@@ -387,9 +485,8 @@ export async function validateSession(): Promise<boolean> {
     const updatedAt = new Date(setting.updated_at)
 
     // Check if session is expired
-    const now = new Date()
     const sessionAge = (now.getTime() - updatedAt.getTime()) / 1000
-    if (sessionAge > SESSION_MAX_AGE) {
+    if (!Number.isNaN(sessionAge) && sessionAge > SESSION_MAX_AGE) {
       await logoutUser()
       return false
     }
