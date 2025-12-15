@@ -26,5 +26,15 @@ export async function GET() {
     webhookUrl,
     webhookToken,
     stats: null, // Stats removed - use campaign details page instead
+    debug: {
+      vercelEnv: process.env.VERCEL_ENV || null,
+      vercelUrl: process.env.VERCEL_URL || null,
+      vercelProjectProductionUrl: process.env.VERCEL_PROJECT_PRODUCTION_URL || null,
+      appUrl: process.env.NEXT_PUBLIC_APP_URL || null,
+      gitCommitSha: process.env.VERCEL_GIT_COMMIT_SHA || null,
+      gitCommitRef: process.env.VERCEL_GIT_COMMIT_REF || null,
+      gitCommitMessage: process.env.VERCEL_GIT_COMMIT_MESSAGE || null,
+      deploymentId: process.env.VERCEL_DEPLOYMENT_ID || null,
+    },
   })
 }
