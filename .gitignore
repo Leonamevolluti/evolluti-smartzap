@@ -52,7 +52,10 @@ SECURITY.md
 metadata.json
 
 # Local-only maintenance scripts
-scripts/
+# Importante: não ignore o diretório inteiro (scripts/) se você quiser permitir
+# exceções pontuais. Por isso usamos scripts/* e liberamos explicitamente o arquivo.
+scripts/*
+!scripts/meta-audit.mjs
 
 # OS
 .DS_Store
