@@ -208,6 +208,10 @@ interface CampaignDetailsViewProps {
   filterStatus?: MessageStatus | null;
   setFilterStatus?: (status: MessageStatus | null) => void;
   telemetry?: RealtimeLatencyTelemetry | null;
+  // Pagination (Load more)
+  onLoadMore?: () => void;
+  canLoadMore?: boolean;
+  isLoadingMore?: boolean;
 }
 
 export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
@@ -244,6 +248,9 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
   filterStatus,
   setFilterStatus,
   telemetry,
+  onLoadMore,
+  canLoadMore,
+  isLoadingMore,
 }) => {
   const [showTemplatePreview, setShowTemplatePreview] = useState(false);
   const [isPerfOpen, setIsPerfOpen] = useState(false);
@@ -868,7 +875,7 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {messages.slice(0, 50).map((msg) => (
+              {messages.map((msg) => (
                 <tr key={msg.id} className="hover:bg-white/5 transition-colors">
                   <td className="px-6 py-3 font-medium text-gray-200">{msg.contactName}</td>
                   <td className="px-6 py-3 font-mono text-xs text-gray-500">{msg.contactPhone}</td>
@@ -923,11 +930,37 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
               )}
             </tbody>
           </table>
-          {messages.length > 50 && (
-            <div className="p-3 text-center border-t border-white/5 text-xs text-gray-500">
-              Mostrando os primeiros 50 resultados de {messages.length}
-            </div>
-          )}
+          {(() => {
+            const total = Number(messageStats?.total ?? messages.length)
+            const shown = Number(messages.length)
+            if (!total) return null
+            if (shown >= total) return null
+
+            const showLoadMore = Boolean(canLoadMore && onLoadMore)
+
+            return (
+              <div className="p-4 border-t border-white/5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="text-xs text-gray-500">
+                  Mostrando <span className="font-mono text-gray-300">{shown}</span> de{' '}
+                  <span className="font-mono text-gray-300">{total}</span>
+                </div>
+
+                {showLoadMore ? (
+                  <button
+                    type="button"
+                    onClick={onLoadMore}
+                    disabled={!!isLoadingMore}
+                    className="px-3 py-2 bg-zinc-900 border border-white/10 rounded-lg text-gray-300 hover:text-white hover:bg-white/5 transition-colors flex items-center gap-2 text-xs font-medium disabled:opacity-50"
+                  >
+                    {isLoadingMore ? <Loader2 size={14} className="animate-spin" /> : null}
+                    {isLoadingMore ? 'Carregando...' : 'Carregar mais'}
+                  </button>
+                ) : (
+                  <div className="text-xs text-gray-600">(Esta tela carrega até 100 por vez)</div>
+                )}
+              </div>
+            )
+          })()}
         </div>
       </div>
 

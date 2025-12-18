@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from '@/lib/navigation';
 import { toast } from 'sonner';
@@ -77,6 +77,9 @@ export const useCampaignDetailsController = () => {
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<MessageStatus | null>(null);
+  const [extraMessages, setExtraMessages] = useState<Message[]>([]);
+  const [nextOffset, setNextOffset] = useState(0);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isResendingSkipped, setIsResendingSkipped] = useState(false);
   const [isCancelingSchedule, setIsCancelingSchedule] = useState(false);
@@ -87,6 +90,7 @@ export const useCampaignDetailsController = () => {
   // Refs para merge monotônico (evita regressão visual quando broadcast chega antes do DB).
   const lastCampaignRef = useRef<Campaign | undefined>(undefined)
   const lastMessagesRef = useRef<CampaignMessagesResponse | undefined>(undefined)
+  const loadMoreTokenRef = useRef(0)
 
   // Fetch campaign data (com polling opcional calculado abaixo)
   const campaignQuery = useQuery<Campaign | undefined>({
@@ -139,10 +143,22 @@ export const useCampaignDetailsController = () => {
     refetchInterval: pollingInterval,
   })
 
+  // A API suporta até 100 por página. Para campanhas pequenas isso evita a sensação de
+  // "sumiu gente" (ex.: total 54 mas a tabela só mostra 50).
+  const MESSAGES_PAGE_LIMIT = 100
+
+  // Reset de paginação quando muda a campanha ou o filtro.
+  useEffect(() => {
+    loadMoreTokenRef.current += 1
+    setExtraMessages([])
+    setNextOffset(MESSAGES_PAGE_LIMIT)
+    setIsLoadingMore(false)
+  }, [id, filterStatus])
+
   // Fetch messages with optional polling
   const messagesQuery = useQuery<CampaignMessagesResponse>({
     queryKey: ['campaignMessages', id, filterStatus],
-    queryFn: () => campaignService.getMessages(id!, { status: filterStatus || undefined }),
+    queryFn: () => campaignService.getMessages(id!, { status: filterStatus || undefined, limit: MESSAGES_PAGE_LIMIT, offset: 0 }),
     enabled: !!id && !id.startsWith('temp_'),
     staleTime: 5000,
     // Backup polling only while connected and active
@@ -156,17 +172,87 @@ export const useCampaignDetailsController = () => {
 
   const activeCampaign = campaignQuery.data as Campaign | undefined;
 
-  // Extract messages from paginated response
-  const messages: Message[] = useMemo(() => {
+  // Messages (página 0) + páginas extras carregadas via "Carregar mais".
+  const baseMessages: Message[] = useMemo(() => {
     const data = messagesQuery.data;
     if (!data) return [];
     return data.messages || [];
   }, [messagesQuery.data]);
 
+  const allLoadedMessages: Message[] = useMemo(() => {
+    if (extraMessages.length === 0) return baseMessages
+
+    const seen = new Set<string>()
+    const merged: Message[] = []
+
+    for (const msg of baseMessages) {
+      if (!msg?.id) continue
+      if (seen.has(msg.id)) continue
+      seen.add(msg.id)
+      merged.push(msg)
+    }
+
+    for (const msg of extraMessages) {
+      if (!msg?.id) continue
+      if (seen.has(msg.id)) continue
+      seen.add(msg.id)
+      merged.push(msg)
+    }
+
+    return merged
+  }, [baseMessages, extraMessages]);
+
   const messageStats = useMemo(() => {
     const data = messagesQuery.data;
     return data?.stats || null;
   }, [messagesQuery.data]);
+
+  const totalMessages = useMemo(() => {
+    const total = Number(messagesQuery.data?.pagination?.total ?? messageStats?.total ?? 0)
+    return total > 0 ? total : allLoadedMessages.length
+  }, [allLoadedMessages.length, messageStats?.total, messagesQuery.data?.pagination?.total])
+
+  const canLoadMore = useMemo(() => {
+    if (!id || id.startsWith('temp_')) return false
+    if (messagesQuery.isLoading) return false
+    return allLoadedMessages.length < totalMessages
+  }, [allLoadedMessages.length, id, messagesQuery.isLoading, totalMessages])
+
+  const handleLoadMore = async () => {
+    if (!id || id.startsWith('temp_')) return
+    if (isLoadingMore) return
+    if (!canLoadMore) return
+
+    const token = loadMoreTokenRef.current
+    const offset = nextOffset
+
+    setIsLoadingMore(true)
+    try {
+      const res = await campaignService.getMessages(id, {
+        status: filterStatus || undefined,
+        limit: MESSAGES_PAGE_LIMIT,
+        offset,
+      })
+
+      // Se o usuário trocou campanha/filtro enquanto carregava, ignora.
+      if (loadMoreTokenRef.current !== token) return
+
+      const newMsgs = res?.messages || []
+      setExtraMessages(prev => {
+        if (!newMsgs.length) return prev
+
+        const seen = new Set(prev.map(m => m.id))
+        const appended = newMsgs.filter(m => m?.id && !seen.has(m.id))
+        return appended.length ? [...prev, ...appended] : prev
+      })
+
+      setNextOffset(offset + MESSAGES_PAGE_LIMIT)
+    } finally {
+      if (loadMoreTokenRef.current === token) {
+        setIsLoadingMore(false)
+      }
+    }
+  }
 
   // Manual refresh function
   const refetch = async () => {
@@ -268,23 +354,23 @@ export const useCampaignDetailsController = () => {
   })
 
   const filteredMessages = useMemo(() => {
-    if (!messages) return [];
-    return messages.filter(m =>
+    if (!allLoadedMessages) return [];
+    return allLoadedMessages.filter(m =>
       m.contactName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       m.contactPhone.includes(searchTerm)
     );
-  }, [messages, searchTerm]);
+  }, [allLoadedMessages, searchTerm]);
 
   // Calculate real stats from messages (fallback if campaign stats not available)
   const realStats = useMemo(() => {
-    if (!messages || messages.length === 0) return null;
-    const sent = messages.filter(m => m.status === MessageStatus.SENT || m.status === MessageStatus.DELIVERED || m.status === MessageStatus.READ).length;
-    const failed = messages.filter(m => m.status === MessageStatus.FAILED).length;
-    const skipped = messages.filter(m => m.status === MessageStatus.SKIPPED).length;
-    const delivered = messages.filter(m => m.status === MessageStatus.DELIVERED || m.status === MessageStatus.READ).length;
-    const read = messages.filter(m => m.status === MessageStatus.READ).length;
-    return { sent, failed, skipped, delivered, read, total: messages.length };
-  }, [messages]);
+    if (!allLoadedMessages || allLoadedMessages.length === 0) return null;
+    const sent = allLoadedMessages.filter(m => m.status === MessageStatus.SENT || m.status === MessageStatus.DELIVERED || m.status === MessageStatus.READ).length;
+    const failed = allLoadedMessages.filter(m => m.status === MessageStatus.FAILED).length;
+    const skipped = allLoadedMessages.filter(m => m.status === MessageStatus.SKIPPED).length;
+    const delivered = allLoadedMessages.filter(m => m.status === MessageStatus.DELIVERED || m.status === MessageStatus.READ).length;
+    const read = allLoadedMessages.filter(m => m.status === MessageStatus.READ).length;
+    return { sent, failed, skipped, delivered, read, total: allLoadedMessages.length };
+  }, [allLoadedMessages]);
 
   // Actions
   const handlePause = () => {
@@ -353,6 +439,9 @@ export const useCampaignDetailsController = () => {
     navigate,
     realStats,
     messageStats,
+    onLoadMore: handleLoadMore,
+    canLoadMore,
+    isLoadingMore,
     // Realtime status
     isRealtimeConnected,
     shouldShowRefreshButton,

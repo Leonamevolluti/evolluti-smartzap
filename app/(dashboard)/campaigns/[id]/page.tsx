@@ -41,6 +41,9 @@ export default function CampaignDetailsPage() {
       refetch={controller.refetch}
       filterStatus={controller.filterStatus}
       setFilterStatus={controller.setFilterStatus}
+      onLoadMore={controller.onLoadMore}
+      canLoadMore={controller.canLoadMore}
+      isLoadingMore={controller.isLoadingMore}
     />
   )
 }
