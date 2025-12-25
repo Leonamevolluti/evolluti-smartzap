@@ -628,7 +628,7 @@ export async function POST(request: NextRequest) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   workflowId: targetWorkflowId,
-                  input: { to: from, message: text },
+                  input: { from, to: from, message: text },
                 }),
               })
             } catch (e) {

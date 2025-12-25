@@ -31,8 +31,11 @@ export function resolveRecipient(input: ResolveRecipientInput): {
     "";
   const rawTo = source === "inbound" ? inbound : input.to || "";
   const normalized = normalizePhoneNumber(rawTo);
-  if (!normalized) {
-    return { ok: false, error: "Recipient phone number is required" };
+  if (!normalized || !/^\+\d{8,15}$/.test(normalized)) {
+    return {
+      ok: false,
+      error: `Recipient phone number is invalid: "${rawTo}"`,
+    };
   }
   return { ok: true, to: normalized };
 }
