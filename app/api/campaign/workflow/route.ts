@@ -841,10 +841,39 @@ export const { POST } = serve<CampaignWorkflowInput>(
               headerInfoPre.format && ['IMAGE', 'VIDEO', 'DOCUMENT', 'GIF'].includes(String(headerInfoPre.format))
             )
 
+            const alwaysRehostEnabled = process.env.ALWAYS_REHOST_TEMPLATE_MEDIA === '1'
+            const exampleIsHttp = Boolean(examplePre && isHttpUrl(String(examplePre)))
+            const exampleHost = examplePre ? getUrlHost(String(examplePre)) : null
+
+            // Observabilidade: quando o rehost preventivo está habilitado, queremos entender
+            // por que ele rodou (ou não) em produção.
             const shouldProactivelyRehost =
               headerIsMediaPre &&
-              Boolean(examplePre && isHttpUrl(examplePre)) &&
-              (urlLooksLikeMetaWeblink(String(examplePre)) || process.env.ALWAYS_REHOST_TEMPLATE_MEDIA === '1')
+              exampleIsHttp &&
+              (urlLooksLikeMetaWeblink(String(examplePre)) || alwaysRehostEnabled)
+
+            // Se está habilitado e NÃO vamos rehost, persistimos um evento de skip com o motivo.
+            if (alwaysRehostEnabled && !shouldProactivelyRehost) {
+              await emitWorkflowTrace({
+                traceId,
+                campaignId,
+                step,
+                batchIndex,
+                phase: 'template_media_rehost_prepare_skip',
+                ok: true,
+                extra: {
+                  reason: !headerIsMediaPre
+                    ? 'header_not_media'
+                    : !examplePre
+                      ? 'missing_example'
+                      : !exampleIsHttp
+                        ? 'example_not_http'
+                        : 'does_not_look_like_weblink',
+                  headerFormat: headerInfoPre.format || null,
+                  exampleHost,
+                },
+              })
+            }
 
             if (shouldProactivelyRehost && examplePre) {
               await emitWorkflowTrace({
@@ -856,7 +885,8 @@ export const { POST } = serve<CampaignWorkflowInput>(
                 ok: true,
                 extra: {
                   headerFormat: headerInfoPre.format || null,
-                  exampleHost: getUrlHost(String(examplePre)) || null,
+                  exampleHost,
+                  alwaysRehostEnabled,
                 },
               })
 
