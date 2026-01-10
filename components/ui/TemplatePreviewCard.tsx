@@ -259,6 +259,7 @@ export interface TemplatePreviewCardProps {
   headerVariables?: string[]
   namedVariables?: Record<string, string>
   namedHeaderVariables?: Record<string, string>
+  headerMediaPreviewUrl?: string | null
   /** Mostra título/kicker dentro do card. Desligado por padrão (para evitar duplicação no layout da página). */
   showTitle?: boolean
   /** Rótulo pequeno acima do título quando showTitle=true */
@@ -277,6 +278,7 @@ export const TemplatePreviewCard: React.FC<TemplatePreviewCardProps> = ({
   headerVariables,
   namedVariables,
   namedHeaderVariables,
+  headerMediaPreviewUrl,
   showTitle = false,
   titleKicker = 'Template',
   otpMode = 'auto',
@@ -306,7 +308,11 @@ export const TemplatePreviewCard: React.FC<TemplatePreviewCardProps> = ({
     return injectOtpSentinel(replaced)
   }
 
-  const headerText = header?.format === 'TEXT' ? header?.text : undefined
+  const headerFormat = header?.format ? String(header.format).toUpperCase() : undefined
+  const headerText = headerFormat === 'TEXT' ? header?.text : undefined
+  const showHeaderMedia =
+    Boolean(headerMediaPreviewUrl) &&
+    Boolean(headerFormat && ['IMAGE', 'VIDEO', 'DOCUMENT', 'GIF'].includes(headerFormat))
   const bodyText = body?.text || fallbackContent || ''
   const footerText = footer?.text || ''
 
@@ -323,6 +329,36 @@ export const TemplatePreviewCard: React.FC<TemplatePreviewCardProps> = ({
         <div className="mb-6">
           <div className="text-xs uppercase tracking-widest text-gray-500">{titleKicker}</div>
           <div className="mt-2 text-2xl font-semibold tracking-tight text-white">{templateName}</div>
+        </div>
+      ) : null}
+
+      {showHeaderMedia ? (
+        <div className="mb-5 overflow-hidden rounded-xl border border-white/10 bg-white/5">
+          {headerFormat === 'DOCUMENT' ? (
+            <a
+              href={headerMediaPreviewUrl || '#'}
+              target="_blank"
+              rel="noreferrer"
+              className="block px-4 py-3 text-xs font-semibold text-primary-200 hover:text-primary-100"
+            >
+              Abrir documento
+            </a>
+          ) : headerFormat === 'VIDEO' || headerFormat === 'GIF' ? (
+            <video
+              src={headerMediaPreviewUrl || undefined}
+              className="h-40 w-full object-cover"
+              muted
+              controls
+              playsInline
+            />
+          ) : (
+            <img
+              src={headerMediaPreviewUrl || undefined}
+              alt="Prévia da mídia do cabeçalho"
+              className="h-40 w-full object-cover"
+              loading="lazy"
+            />
+          )}
         </div>
       ) : null}
 

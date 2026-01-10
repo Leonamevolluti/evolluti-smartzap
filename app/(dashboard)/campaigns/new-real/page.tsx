@@ -187,6 +187,7 @@ export default function CampaignsNewRealPage() {
   const [batchFixIndex, setBatchFixIndex] = useState(0)
   const batchCloseReasonRef = useRef<'advance' | 'finish' | null>(null)
   const batchNextRef = useRef<{ contactId: string; focus: ContactFixFocus; title: string } | null>(null)
+  const previewMediaFetchRef = useRef<Set<string>>(new Set())
   const [campaignName, setCampaignName] = useState(() => {
     const now = new Date()
     const day = String(now.getDate()).padStart(2, '0')
@@ -1009,6 +1010,42 @@ export default function CampaignsNewRealPage() {
   const templateComponents = useMemo(() => {
     return (activeTemplate?.components || []) as TemplateComponent[]
   }, [activeTemplate])
+
+  useEffect(() => {
+    if (!activeTemplate) return
+    if (activeTemplate.headerMediaPreviewUrl) return
+
+    const header = templateComponents.find((c) => c.type === 'HEADER')
+    const format = header?.format ? String(header.format).toUpperCase() : ''
+    const isMedia = ['IMAGE', 'VIDEO', 'DOCUMENT', 'GIF'].includes(format)
+    if (!isMedia) return
+
+    const name = activeTemplate.name
+    if (!name || previewMediaFetchRef.current.has(name)) return
+    previewMediaFetchRef.current.add(name)
+
+    let cancelled = false
+    ;(async () => {
+      try {
+        const details = await fetchJson<{ headerMediaPreviewUrl?: string | null }>(
+          `/api/templates/${encodeURIComponent(name)}`
+        )
+        if (cancelled || !details?.headerMediaPreviewUrl) return
+
+        const patch = (prev: Template | null) =>
+          prev && prev.name === name ? { ...prev, headerMediaPreviewUrl: details.headerMediaPreviewUrl } : prev
+
+        setSelectedTemplate((prev) => patch(prev))
+        setPreviewTemplate((prev) => patch(prev))
+      } catch {
+        // best-effort
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeTemplate, templateComponents])
 
   const flattenedButtons = useMemo(() => {
     const out: Array<{ index: number; button: TemplateButton }> = []
@@ -2717,6 +2754,7 @@ export default function CampaignsNewRealPage() {
                       headerVariables={Array.isArray(resolvedHeader) ? resolvedHeader : undefined}
                       namedVariables={!Array.isArray(resolvedBody) && resolvedBody ? (resolvedBody as Record<string, string>) : undefined}
                       namedHeaderVariables={!Array.isArray(resolvedHeader) && resolvedHeader ? (resolvedHeader as Record<string, string>) : undefined}
+                      headerMediaPreviewUrl={activeTemplate.headerMediaPreviewUrl || null}
                       fallbackContent={activeTemplate.content || activeTemplate.preview}
                     />
                   </div>
