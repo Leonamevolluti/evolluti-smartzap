@@ -377,6 +377,7 @@ interface MessageHeaderProps {
   parameterFormat?: TemplateParameterFormat;
   namedVariables?: Record<string, string>;
   namedHeaderVariables?: Record<string, string>;
+  headerMediaPreviewUrl?: string | null;
   variant?: PreviewVariant;
 }
 
@@ -387,9 +388,12 @@ const MessageHeader: React.FC<MessageHeaderProps> = ({
   parameterFormat = 'positional',
   namedVariables,
   namedHeaderVariables,
+  headerMediaPreviewUrl,
   variant = 'whatsapp',
 }) => {
-  switch (header.format) {
+  const format = String(header.format || '').toUpperCase()
+
+  switch (format) {
     case 'TEXT':
       if (!header.text) return null;
       return (
@@ -410,26 +414,58 @@ const MessageHeader: React.FC<MessageHeaderProps> = ({
     case 'IMAGE':
       return (
         <div className="bg-[#202c33] rounded-lg rounded-tl-none shadow-sm mb-1 overflow-hidden">
-          <div className="bg-zinc-700/50 h-32 flex items-center justify-center">
-            <Image size={32} className="text-zinc-500" />
-          </div>
+          {headerMediaPreviewUrl ? (
+            <img
+              src={headerMediaPreviewUrl}
+              alt="Prévia da mídia do cabeçalho"
+              className="h-32 w-full object-cover"
+              loading="lazy"
+            />
+          ) : (
+            <div className="bg-zinc-700/50 h-32 flex items-center justify-center">
+              <Image size={32} className="text-zinc-500" />
+            </div>
+          )}
         </div>
       );
     case 'VIDEO':
+    case 'GIF':
       return (
         <div className="bg-[#202c33] rounded-lg rounded-tl-none shadow-sm mb-1 overflow-hidden">
-          <div className="bg-zinc-700/50 h-32 flex items-center justify-center">
-            <Video size={32} className="text-zinc-500" />
-          </div>
+          {headerMediaPreviewUrl ? (
+            <video
+              src={headerMediaPreviewUrl}
+              className="h-32 w-full object-cover"
+              muted
+              controls
+              playsInline
+            />
+          ) : (
+            <div className="bg-zinc-700/50 h-32 flex items-center justify-center">
+              <Video size={32} className="text-zinc-500" />
+            </div>
+          )}
         </div>
       );
     case 'DOCUMENT':
       return (
         <div className="bg-[#202c33] rounded-lg rounded-tl-none shadow-sm mb-1 p-3">
-          <div className="flex items-center gap-2 text-zinc-400">
-            <FileText size={20} />
-            <span className="text-[12px]">Documento anexado</span>
-          </div>
+          {headerMediaPreviewUrl ? (
+            <a
+              href={headerMediaPreviewUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 text-zinc-200 hover:text-white transition-colors"
+            >
+              <FileText size={20} />
+              <span className="text-[12px]">Abrir documento</span>
+            </a>
+          ) : (
+            <div className="flex items-center gap-2 text-zinc-400">
+              <FileText size={20} />
+              <span className="text-[12px]">Documento anexado</span>
+            </div>
+          )}
         </div>
       );
     default:
@@ -448,6 +484,7 @@ interface MessageBubbleProps {
   parameterFormat?: TemplateParameterFormat;
   namedVariables?: Record<string, string>;
   namedHeaderVariables?: Record<string, string>;
+  headerMediaPreviewUrl?: string | null;
   /** Fallback content when no components available */
   fallbackContent?: string;
   /** Visual variant */
@@ -461,6 +498,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   parameterFormat = 'positional',
   namedVariables,
   namedHeaderVariables,
+  headerMediaPreviewUrl,
   fallbackContent,
   variant = 'whatsapp',
 }) => {
@@ -495,6 +533,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           parameterFormat={parameterFormat}
           namedVariables={namedVariables}
           namedHeaderVariables={namedHeaderVariables}
+          headerMediaPreviewUrl={headerMediaPreviewUrl}
           variant={variant}
         />
       )}
@@ -562,6 +601,8 @@ interface WhatsAppPhonePreviewProps {
   variables?: string[];
   /** Variables to replace in header. Separate from body indices. */
   headerVariables?: string[];
+  /** URL para preview da mídia do header (quando disponível). */
+  headerMediaPreviewUrl?: string | null;
   /** How to interpret placeholders: positional ({{1}}) or named ({{first_name}}). */
   parameterFormat?: TemplateParameterFormat;
   /** Variables for named templates (BODY). */
@@ -595,6 +636,7 @@ export const WhatsAppPhonePreview: React.FC<WhatsAppPhonePreviewProps> = ({
   components,
   variables,
   headerVariables,
+  headerMediaPreviewUrl,
   parameterFormat = 'positional',
   namedVariables,
   namedHeaderVariables,
@@ -651,6 +693,7 @@ export const WhatsAppPhonePreview: React.FC<WhatsAppPhonePreviewProps> = ({
             components={components}
             variables={variables}
             headerVariables={headerVariables}
+            headerMediaPreviewUrl={headerMediaPreviewUrl}
             parameterFormat={parameterFormat}
             namedVariables={namedVariables}
             namedHeaderVariables={namedHeaderVariables}
@@ -694,6 +737,8 @@ interface CompactPreviewProps {
   variables?: string[];
   /** Variables to replace in header. Separate from body indices. */
   headerVariables?: string[];
+  /** URL para preview da mídia do header (quando disponível). */
+  headerMediaPreviewUrl?: string | null;
   /** How to interpret placeholders: positional ({{1}}) or named ({{first_name}}). */
   parameterFormat?: TemplateParameterFormat;
   /** Variables for named templates (BODY). */
@@ -712,6 +757,7 @@ export const CompactPreview: React.FC<CompactPreviewProps> = ({
   components,
   variables,
   headerVariables,
+  headerMediaPreviewUrl,
   parameterFormat = 'positional',
   namedVariables,
   namedHeaderVariables,
@@ -727,6 +773,7 @@ export const CompactPreview: React.FC<CompactPreviewProps> = ({
         components={components}
         variables={variables}
         headerVariables={headerVariables}
+        headerMediaPreviewUrl={headerMediaPreviewUrl}
         parameterFormat={parameterFormat}
         namedVariables={namedVariables}
         namedHeaderVariables={namedHeaderVariables}

@@ -61,7 +61,7 @@ export const TemplateButtonSchema = z.object({
 /** Schema Zod para componentes de template (HEADER/BODY/FOOTER/BUTTONS). */
 export const TemplateComponentSchema = z.object({
   type: z.enum(['HEADER', 'BODY', 'FOOTER', 'BUTTONS', 'LIMITED_TIME_OFFER']),
-  format: z.enum(['TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT', 'LOCATION']).optional(),
+  format: z.enum(['TEXT', 'IMAGE', 'VIDEO', 'GIF', 'DOCUMENT', 'LOCATION']).optional(),
   text: z.string().optional(),
   buttons: z.array(TemplateButtonSchema).optional(),
   limited_time_offer: z.object({
@@ -81,6 +81,10 @@ export const TemplateSchema = z.object({
   content: z.string(),
   preview: z.string(),
   lastUpdated: z.string(),
+  headerMediaId: z.string().optional(),
+  headerMediaHash: z.string().optional(),
+  headerMediaPreviewUrl: z.string().optional(),
+  headerMediaPreviewExpiresAt: z.string().optional(),
   components: z.array(TemplateComponentSchema).optional(),
 });
 

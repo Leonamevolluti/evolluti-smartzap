@@ -3270,6 +3270,7 @@ export const CampaignWizardView: React.FC<CampaignWizardViewProps> = ({
                 className="w-[320px] h-155 max-h-full"
                 components={previewTemplate?.components}
                 fallbackContent={previewTemplate?.content}
+                headerMediaPreviewUrl={previewTemplate?.headerMediaPreviewUrl || null}
                 variables={(() => {
                   // Get contact info for resolving variable tokens based on recipient source
                   let contactName = '';

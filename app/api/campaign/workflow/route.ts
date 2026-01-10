@@ -906,6 +906,21 @@ export const { POST } = serve<CampaignWorkflowInput>(
                       downloadStatus: downloaded.status,
                       publicProbeStatus: status,
                     }
+                    try {
+                      const exampleHash = createHash('sha256').update(example).digest('hex').slice(0, 32)
+                      await supabase
+                        .from('templates')
+                        .update({
+                          header_media_preview_url: publicUrl,
+                          header_media_preview_expires_at: null,
+                          header_media_hash: exampleHash,
+                          header_media_preview_updated_at: new Date().toISOString(),
+                          updated_at: new Date().toISOString(),
+                        })
+                        .eq('name', templateName)
+                    } catch {
+                      // best-effort
+                    }
                     return hostedHeaderMediaForBatch
                   }
 
@@ -924,6 +939,21 @@ export const { POST } = serve<CampaignWorkflowInput>(
                       downloadStatus: downloaded.status,
                       publicProbeStatus: status,
                       signedExpiresIn: expiresIn,
+                    }
+                    try {
+                      const exampleHash = createHash('sha256').update(example).digest('hex').slice(0, 32)
+                      await supabase
+                        .from('templates')
+                        .update({
+                          header_media_preview_url: signedUrl,
+                          header_media_preview_expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
+                          header_media_hash: exampleHash,
+                          header_media_preview_updated_at: new Date().toISOString(),
+                          updated_at: new Date().toISOString(),
+                        })
+                        .eq('name', templateName)
+                    } catch {
+                      // best-effort
                     }
                     return hostedHeaderMediaForBatch
                   }

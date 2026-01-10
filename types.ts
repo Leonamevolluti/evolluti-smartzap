@@ -46,12 +46,14 @@ export interface Template {
   fetchedAt?: string | null;
   headerMediaId?: string | null;
   headerMediaHash?: string | null;
+  headerMediaPreviewUrl?: string | null;
+  headerMediaPreviewExpiresAt?: string | null;
   components?: TemplateComponent[]; // Full components from Meta API
 }
 
 export interface TemplateComponent {
   type: 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS' | 'LIMITED_TIME_OFFER';
-  format?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT' | 'LOCATION';
+  format?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'GIF' | 'DOCUMENT' | 'LOCATION';
   text?: string;
   buttons?: TemplateButton[];
   example?: any;

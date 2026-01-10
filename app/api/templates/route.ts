@@ -180,7 +180,22 @@ export async function GET(request: NextRequest) {
     // Importante: aguardamos para evitar race condition com /api/campaign/precheck.
     await syncTemplatesToLocalDb(templates)
 
-    return NextResponse.json(templates)
+    // Merge com dados locais (ex.: cache de preview de mídia).
+    const local = await templateDb.getAll().catch(() => [])
+    const localByName = new Map(local.map((t) => [t.name, t]))
+    const merged = templates.map((t) => {
+      const cached = localByName.get(t.name)
+      if (!cached) return t
+      return {
+        ...t,
+        headerMediaPreviewUrl: cached.headerMediaPreviewUrl ?? null,
+        headerMediaPreviewExpiresAt: cached.headerMediaPreviewExpiresAt ?? null,
+        headerMediaId: cached.headerMediaId ?? null,
+        headerMediaHash: cached.headerMediaHash ?? null,
+      }
+    })
+
+    return NextResponse.json(merged)
   } catch (error) {
     console.error('Meta API Error:', error)
     return NextResponse.json(

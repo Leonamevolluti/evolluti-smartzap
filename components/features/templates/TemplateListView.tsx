@@ -6,6 +6,7 @@ import { UTILITY_CATEGORIES } from '../../../hooks/useTemplates';
 import { UtilityCategory, GeneratedTemplate } from '../../../services/templateService';
 import { BulkGenerationModal } from './BulkGenerationModal';
 import { TemplatePreviewCard } from '@/components/ui/TemplatePreviewCard';
+import { WhatsAppPhonePreview } from '@/components/ui/WhatsAppPhonePreview';
 
 const StatusBadge = ({ status }: { status: TemplateStatus }) => {
   const styles = {
@@ -771,29 +772,19 @@ export const TemplateListView: React.FC<TemplateListViewProps> = ({
 
                     {/* Preview WhatsApp - O FOCO */}
                     <div className="bg-[#0b141a] rounded-xl p-3">
-                      <div className="bg-[#005c4b] rounded-lg rounded-tl-none p-3">
-                        {templateDetails?.header && (
-                          <p className="text-white text-sm font-bold mb-2">{templateDetails.header}</p>
-                        )}
-                        <p className="text-white text-sm leading-relaxed whitespace-pre-wrap">{previewContent}</p>
-                        {templateDetails?.footer && (
-                          <p className="text-gray-300 text-[11px] mt-2 opacity-70">{templateDetails.footer}</p>
-                        )}
-                        <div className="text-right mt-1">
-                          <span className="text-[10px] text-gray-300 opacity-50">
-                            {new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                      </div>
-                      {templateDetails?.buttons && templateDetails.buttons.length > 0 && (
-                        <div className="mt-1 space-y-1">
-                          {templateDetails.buttons.map((btn, idx) => (
-                            <div key={idx} className="bg-[#005c4b] text-[#00a884] text-xs font-medium py-2 rounded-lg text-center">
-                              {btn.text}
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      <WhatsAppPhonePreview
+                        components={selectedTemplate.components}
+                        fallbackContent={previewContent}
+                        parameterFormat={selectedTemplate.parameterFormat || 'positional'}
+                        variables={previewVariables}
+                        headerVariables={previewVariables}
+                        headerMediaPreviewUrl={
+                          selectedTemplate.headerMediaPreviewUrl ||
+                          templateDetails?.headerMediaPreviewUrl ||
+                          null
+                        }
+                        size="md"
+                      />
                     </div>
 
                     {/* Qualidade - SÓ se conhecida */}
