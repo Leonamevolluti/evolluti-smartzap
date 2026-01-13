@@ -7,6 +7,7 @@ import { AccountLimits } from '../../../lib/meta-limits';
 import { PhoneNumber } from '../../../hooks/useSettings';
 import { AISettings } from './AISettings';
 import { TestContactPanel } from './TestContactPanel';
+import { AutoSuppressionPanel } from './AutoSuppressionPanel';
 import type { AiFallbackConfig, AiPromptsConfig, AiRoutesConfig } from '../../../lib/ai/ai-center-defaults';
 import { formatPhoneNumberDisplay } from '../../../lib/phone-formatter';
 import { performanceService } from '../../../services/performanceService';
@@ -473,21 +474,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       warnings,
     };
   }, [plannerMessages, plannerSeconds, plannerLatencyMs, plannerHeadroom, plannerLatencyTouched, plannerBaselineMetaMs, turboState?.targetMps]);
-
-  // Auto-supressão form state
-  const autoConfig = autoSuppression?.config;
-  const [isEditingAutoSuppression, setIsEditingAutoSuppression] = useState(false);
-  const [autoDraft, setAutoDraft] = useState(() => ({
-    enabled: autoConfig?.enabled ?? true,
-    undeliverable131026: {
-      enabled: autoConfig?.undeliverable131026?.enabled ?? true,
-      windowDays: autoConfig?.undeliverable131026?.windowDays ?? 30,
-      threshold: autoConfig?.undeliverable131026?.threshold ?? 1,
-      ttlBaseDays: autoConfig?.undeliverable131026?.ttlBaseDays ?? 90,
-      ttl2Days: autoConfig?.undeliverable131026?.ttl2Days ?? 180,
-      ttl3Days: autoConfig?.undeliverable131026?.ttl3Days ?? 365,
-    },
-  }));
 
   // Workflow execution (global)
   const workflowExecutionConfig = workflowExecution?.config;
@@ -1142,23 +1128,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     });
   }, [turboConfig?.enabled, (turboConfig as any)?.sendConcurrency, (turboConfig as any)?.batchSize, turboConfig?.startMps, turboConfig?.maxMps, turboConfig?.minMps, turboConfig?.cooldownSec, turboConfig?.minIncreaseGapSec, turboConfig?.sendFloorDelayMs]);
 
-  // Keep auto-suppression draft in sync when server data arrives (unless editing)
-  React.useEffect(() => {
-    if (!autoConfig) return;
-    if (isEditingAutoSuppression) return;
-    setAutoDraft({
-      enabled: autoConfig.enabled,
-      undeliverable131026: {
-        enabled: autoConfig.undeliverable131026.enabled,
-        windowDays: autoConfig.undeliverable131026.windowDays,
-        threshold: autoConfig.undeliverable131026.threshold,
-        ttlBaseDays: autoConfig.undeliverable131026.ttlBaseDays,
-        ttl2Days: autoConfig.undeliverable131026.ttl2Days,
-        ttl3Days: autoConfig.undeliverable131026.ttl3Days,
-      },
-    });
-  }, [autoConfig?.enabled, autoConfig?.undeliverable131026?.enabled, autoConfig?.undeliverable131026?.windowDays, autoConfig?.undeliverable131026?.threshold, autoConfig?.undeliverable131026?.ttlBaseDays, autoConfig?.undeliverable131026?.ttl2Days, autoConfig?.undeliverable131026?.ttl3Days, isEditingAutoSuppression]);
-
   const clampExecutionValue = (value: number, min: number, max: number) => {
     const safe = Number.isFinite(value) ? value : min;
     return Math.min(max, Math.max(min, Math.floor(safe)));
@@ -1195,41 +1164,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (!saveWhatsAppThrottle) return;
     await saveWhatsAppThrottle({ resetState: true });
     toast.success('Aprendizado do modo turbo reiniciado (target voltou pro startMps)');
-  };
-
-  const handleSaveAutoSuppression = async () => {
-    if (!saveAutoSuppression) return;
-
-    const p = autoDraft.undeliverable131026;
-    if (p.threshold < 1) {
-      toast.error('threshold deve ser ≥ 1');
-      return;
-    }
-    if (p.windowDays < 1) {
-      toast.error('windowDays deve ser ≥ 1');
-      return;
-    }
-    if (p.ttl2Days < p.ttlBaseDays) {
-      toast.error('ttl2Days não pode ser menor que ttlBaseDays');
-      return;
-    }
-    if (p.ttl3Days < p.ttl2Days) {
-      toast.error('ttl3Days não pode ser menor que ttl2Days');
-      return;
-    }
-
-    await saveAutoSuppression({
-      enabled: autoDraft.enabled,
-      undeliverable131026: {
-        enabled: p.enabled,
-        windowDays: p.windowDays,
-        threshold: p.threshold,
-        ttlBaseDays: p.ttlBaseDays,
-        ttl2Days: p.ttl2Days,
-        ttl3Days: p.ttl3Days,
-      },
-    });
-    setIsEditingAutoSuppression(false);
   };
 
   const handleSaveWorkflowExecution = async () => {
@@ -3005,211 +2939,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         {/* Proteção de Qualidade (Auto-supressão) */}
         {settings.isConnected && saveAutoSuppression && (
-          <div className="glass-panel rounded-2xl p-8">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h3 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
-                  <span className="w-1 h-6 bg-primary-500 rounded-full"></span>
-                  <Shield size={18} className="text-primary-400" />
-                  Proteção de Qualidade (Auto-supressão)
-                </h3>
-                <p className="text-sm text-gray-400">
-                  Bloqueia automaticamente telefones com falhas repetidas (ex.: <span className="font-mono">131026</span>)
-                  para reduzir retries inúteis e proteger a qualidade da conta.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                {isEditingAutoSuppression && (
-                  <button
-                    onClick={handleSaveAutoSuppression}
-                    disabled={!!isSavingAutoSuppression}
-                    className="h-10 px-5 rounded-xl bg-primary-500 hover:bg-primary-400 text-black font-semibold transition-all text-sm flex items-center gap-2 shadow-lg shadow-primary-500/10 disabled:opacity-50"
-                    title="Salvar configurações de auto-supressão"
-                  >
-                    {isSavingAutoSuppression ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                    Salvar
-                  </button>
-                )}
-                <button
-                  onClick={() => setIsEditingAutoSuppression((v) => !v)}
-                  className="h-10 px-4 rounded-xl bg-white/5 text-white hover:bg-white/10 border border-white/10 hover:border-white/20 transition-all text-sm font-medium"
-                >
-                  {isEditingAutoSuppression ? 'Fechar' : 'Configurar'}
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-zinc-900/40 border border-white/10 rounded-xl p-4">
-                <div className="text-xs text-gray-500">Status</div>
-                {autoSuppressionLoading ? (
-                  <div className="mt-2 text-sm text-gray-400 flex items-center gap-2">
-                    <Loader2 size={14} className="animate-spin" /> Carregando…
-                  </div>
-                ) : (
-                  <div className="mt-2">
-                    <div className="text-sm text-white">
-                      {autoConfig?.enabled ? (
-                        <span className="text-emerald-300 font-medium">Ativo</span>
-                      ) : (
-                        <span className="text-gray-300 font-medium">Inativo</span>
-                      )}
-                      <span className="text-gray-500"> · </span>
-                      <span className="text-xs text-gray-400">fonte: {autoSuppression?.source || '—'}</span>
-                    </div>
-                    <div className="mt-2 text-xs text-gray-400">
-                      Regra 131026: <span className="font-mono text-white">{autoConfig?.undeliverable131026?.enabled ? 'on' : 'off'}</span>
-                      <span className="text-gray-500"> · </span>
-                      threshold: <span className="font-mono text-white">{autoConfig?.undeliverable131026?.threshold ?? '—'}</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="bg-zinc-900/40 border border-white/10 rounded-xl p-4">
-                <div className="text-xs text-gray-500">Observação</div>
-                <div className="mt-2 text-xs text-gray-400 leading-relaxed">
-                  Dica: com perfil agressivo, <span className="font-mono">threshold=1</span> já coloca em quarentena.
-                  Para “mais seguro”, aumente o threshold.
-                </div>
-              </div>
-            </div>
-
-            {isEditingAutoSuppression && (
-              <div className="mt-6 p-5 bg-zinc-900/30 border border-white/10 rounded-2xl">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm font-medium text-white">Configurações</div>
-                  <label className="flex items-center gap-2 text-sm text-gray-300">
-                    <input
-                      type="checkbox"
-                      checked={!!autoDraft.enabled}
-                      onChange={(e) => setAutoDraft((s) => ({ ...s, enabled: e.target.checked }))}
-                      className="accent-emerald-500"
-                    />
-                    Ativar auto-supressão
-                  </label>
-                </div>
-
-                <div className="mt-4 p-4 bg-zinc-950/30 border border-white/10 rounded-xl">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm text-white font-medium">Regra: 131026 (undeliverable)</div>
-                      <div className="text-[11px] text-gray-500">Cross-campaign: conta falhas por telefone na janela e aplica quarentena.</div>
-                    </div>
-                    <label className="flex items-center gap-2 text-sm text-gray-300">
-                      <input
-                        type="checkbox"
-                        checked={!!autoDraft.undeliverable131026.enabled}
-                        onChange={(e) =>
-                          setAutoDraft((s) => ({
-                            ...s,
-                            undeliverable131026: { ...s.undeliverable131026, enabled: e.target.checked },
-                          }))
-                        }
-                        className="accent-emerald-500"
-                      />
-                      Ativar regra
-                    </label>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-400 mb-1">windowDays</label>
-                      <input
-                        type="number"
-                        value={autoDraft.undeliverable131026.windowDays}
-                        onChange={(e) =>
-                          setAutoDraft((s) => ({
-                            ...s,
-                            undeliverable131026: { ...s.undeliverable131026, windowDays: Number(e.target.value) },
-                          }))
-                        }
-                        className="w-full px-3 py-2 bg-zinc-900/50 border border-white/10 rounded-lg text-sm text-white font-mono"
-                        min={1}
-                        max={365}
-                      />
-                      <p className="text-[11px] text-gray-500 mt-1">Janela (dias) para contar falhas.</p>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-gray-400 mb-1">threshold</label>
-                      <input
-                        type="number"
-                        value={autoDraft.undeliverable131026.threshold}
-                        onChange={(e) =>
-                          setAutoDraft((s) => ({
-                            ...s,
-                            undeliverable131026: { ...s.undeliverable131026, threshold: Number(e.target.value) },
-                          }))
-                        }
-                        className="w-full px-3 py-2 bg-zinc-900/50 border border-white/10 rounded-lg text-sm text-white font-mono"
-                        min={1}
-                        max={20}
-                      />
-                      <p className="text-[11px] text-gray-500 mt-1">Quantas falhas na janela para suprimir.</p>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-gray-400 mb-1">ttlBaseDays</label>
-                      <input
-                        type="number"
-                        value={autoDraft.undeliverable131026.ttlBaseDays}
-                        onChange={(e) =>
-                          setAutoDraft((s) => ({
-                            ...s,
-                            undeliverable131026: { ...s.undeliverable131026, ttlBaseDays: Number(e.target.value) },
-                          }))
-                        }
-                        className="w-full px-3 py-2 bg-zinc-900/50 border border-white/10 rounded-lg text-sm text-white font-mono"
-                        min={1}
-                        max={3650}
-                      />
-                      <p className="text-[11px] text-gray-500 mt-1">Quarentena (dias) na 1ª ocorrência.</p>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-400 mb-1">ttl2Days</label>
-                      <input
-                        type="number"
-                        value={autoDraft.undeliverable131026.ttl2Days}
-                        onChange={(e) =>
-                          setAutoDraft((s) => ({
-                            ...s,
-                            undeliverable131026: { ...s.undeliverable131026, ttl2Days: Number(e.target.value) },
-                          }))
-                        }
-                        className="w-full px-3 py-2 bg-zinc-900/50 border border-white/10 rounded-lg text-sm text-white font-mono"
-                        min={1}
-                        max={3650}
-                      />
-                      <p className="text-[11px] text-gray-500 mt-1">Quarentena (dias) na 2ª ocorrência.</p>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-gray-400 mb-1">ttl3Days</label>
-                      <input
-                        type="number"
-                        value={autoDraft.undeliverable131026.ttl3Days}
-                        onChange={(e) =>
-                          setAutoDraft((s) => ({
-                            ...s,
-                            undeliverable131026: { ...s.undeliverable131026, ttl3Days: Number(e.target.value) },
-                          }))
-                        }
-                        className="w-full px-3 py-2 bg-zinc-900/50 border border-white/10 rounded-lg text-sm text-white font-mono"
-                        min={1}
-                        max={3650}
-                      />
-                      <p className="text-[11px] text-gray-500 mt-1">Quarentena (dias) na 3ª+ ocorrência.</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          <AutoSuppressionPanel
+            autoSuppression={autoSuppression}
+            autoSuppressionLoading={autoSuppressionLoading}
+            saveAutoSuppression={saveAutoSuppression}
+            isSaving={isSavingAutoSuppression}
+          />
         )}
 
         {/* Execução do workflow (global) */}
