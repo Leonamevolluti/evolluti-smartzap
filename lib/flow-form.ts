@@ -379,10 +379,20 @@ export function generateFlowJsonFromFormSpec(form: FlowFormSpecV1): Record<strin
     })
   }
 
+  // Monta o payload com todos os campos do formulário
+  // A sintaxe ${form.CAMPO} é como a Meta referencia valores dos inputs
+  const payload: Record<string, string> = {}
+  for (const field of form.fields) {
+    payload[field.name] = `\${form.${field.name}}`
+  }
+
   children.push({
     type: 'Footer',
     label: form.submitLabel || 'Enviar',
-    'on-click-action': { name: 'complete' },
+    'on-click-action': {
+      name: 'complete',
+      payload,
+    },
   })
 
   return {
