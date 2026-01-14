@@ -458,8 +458,8 @@ export const contactDb = {
         }
 
         if (tag && tag !== 'ALL') {
-            // Para JSONB arrays, usar operador @> com JSON string (não .contains que usa sintaxe {})
-            query = query.filter('tags', '@>', JSON.stringify([tag]))
+            // PostgREST usa 'cs' (contains) que traduz para @> no PostgreSQL
+            query = query.filter('tags', 'cs', JSON.stringify([tag]))
         }
 
         let suppressionMap = new Map<string, { reason: string | null; source: string | null; expiresAt: string | null }>()
@@ -566,8 +566,8 @@ export const contactDb = {
         }
 
         if (tag && tag !== 'ALL') {
-            // Para JSONB arrays, usar operador @> com JSON string (não .contains que usa sintaxe {})
-            query = query.filter('tags', '@>', JSON.stringify([tag]))
+            // PostgREST usa 'cs' (contains) que traduz para @> no PostgreSQL
+            query = query.filter('tags', 'cs', JSON.stringify([tag]))
         }
 
         if (status === 'SUPPRESSED') {
