@@ -34,6 +34,7 @@ export interface FlowFormBuilderProps {
   }) => void
   onActionComplete?: () => void
   onSave: (patch: { spec: unknown; flowJson: unknown }) => void
+  onPreviewScreenIdChange?: (screenId: string | null) => void
   onPreviewChange?: (payload: {
     form: FlowFormSpecV1
     generatedJson: unknown

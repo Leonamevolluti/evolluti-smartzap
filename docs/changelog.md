@@ -1,5 +1,167 @@
 # Changelog (docs)
 
+## 16/01/2026 - Editor unificado (“Tela Viva”)
+
+- **🧠 Um único editor (sem “modo Formulário vs Dinâmico”)**
+  - `app/(dashboard)/flows/builder/[id]/page.tsx` agora usa apenas `UnifiedFlowEditor` e removeu o toggle de modos
+  - Preview continua como “verdade” e passa a suportar **seleção** (highlight) para editar via painel contextual
+
+- **📦 Modelo canônico em `DynamicFlowSpecV1` (migração automática)**
+  - `lib/dynamic-flow.ts` ganhou conversores `formSpecToDynamicSpec` e `bookingConfigToDynamicSpec`
+  - `UnifiedFlowEditor` persiste `spec.dynamicFlow` em background quando o flow vem de `spec.form`, `spec.booking` ou `flow_json` legado
+
+- **🧭 Geração de Flow JSON mais “Meta-like”**
+  - `lib/dynamic-flow.ts` agora gera navegação com `navigate.next` como padrão
+  - `data_api_version: "3.0"` e `routing_model` só entram quando existe `data_exchange` (sem expor routing em flows “form-like”)
+  - Injeção de chaves `__editor_key`/`__editor_title_key` para seleção/edição no preview (formato `screen:*`)
+
+- **🧩 Painel contextual + Assistente de Agendamento**
+  - `components/features/flows/builder/InspectorPanel.tsx` edita título/texto/pergunta/CTA do elemento selecionado
+  - Assistente de agendamento permite ajustar **serviços** e alternar **Calendário vs Dropdown** sem telas separadas
+
+- **🧹 Limpeza e robustez no publish**
+  - `app/api/flows/[id]/meta/publish/route.ts` removeu logs internos e evita validar `spec.form` quando o Flow é dinâmico
+
+- **✅ Regras de navegação mais “óbvias”**
+  - Telas com próxima etapa não podem ficar como “Tela final”; o CTA vira **Continuar** automaticamente
+
+- **🧭 Caminhos (Mapa do fluxo) — ramificação sem JSON**
+  - `lib/dynamic-flow.ts` ganhou `defaultNextByScreen` e `branchesByScreen` no `DynamicFlowSpecV1` + validações
+  - `generateDynamicFlowJson` inclui `routing_model` automaticamente quando houver ramificações (mesmo sem `data_exchange`)
+  - `components/features/flows/builder/UnifiedFlowEditor.tsx` adiciona seção **Caminhos** com destino padrão + regras por campo
+  - `components/ui/MetaFlowPreview.tsx` simula ramificação no clique do CTA usando os “Caminhos” do editor (sem expor JSON)
+  - `components/features/flows/builder/dynamic-flow/AdvancedFlowPanel.tsx` vira modo de manutenção (remove edição de routing JSON)
+
+- **📡 Publish na Meta: compatibilidade com `routing_model`**
+  - `lib/dynamic-flow.ts` normaliza IDs de telas para o padrão aceito pela Meta no `routing_model` (somente letras/underscore), migrando `SCREEN_1/2/3...` → `SCREEN_A/B/C...`
+  - `app/api/flows/[id]/meta/publish/route.ts` passa a exigir `endpoint_uri` também quando houver `data_api_version: "3.0"`/`routing_model` (mesmo sem `data_exchange`), com mensagem explícita de que **localhost não publica**
+
+## 15/01/2026 - Builder dinâmico estilo “Formulário”
+
+- **🧱 Novo builder dinâmico com UX de formulário**
+  - `components/features/flows/builder/dynamic-flow/DynamicFlowBuilder.tsx` traz abas por tela + lista de “blocos” com mover/duplicar/excluir
+  - CTA virou editor simples: **texto do botão**, **tipo de ação** e **“Ir para (próxima tela)”** (sem expor JSON)
+
+- **🧭 Integração no editor principal**
+  - `app/(dashboard)/flows/builder/[id]/page.tsx` usa o `DynamicFlowBuilder` quando o modo for **Dinâmico** (para templates não-agendamento)
+  - Alternar **Formulário/Dinâmico** também sincroniza a prévia (evita precisar “sair e entrar”)
+  - Alternar **“Fluxo real / Formulário”** na prévia também troca o editor (evita confusão e garante atualização imediata)
+  - Simplificação: removidos botões “Fluxo real / Formulário” da prévia (a fonte agora segue o modo do editor)
+  - Simplificação: removidos botões/indicadores de prévia; a área mostra apenas o preview **Meta (oficial)**, sempre
+  - Simplificação: ações do builder (salvar/telas/avançado) foram movidas para um menu “⋯” com **auto-salvar**
+
+- **🧩 JSON mais parecido com o Flow Builder da Meta**
+  - `lib/dynamic-flow.ts` agora prefere aplicar o `Footer` dentro do primeiro `Form` (quando existir)
+  - Extração de ação do `Footer` ficou recursiva (funciona mesmo com `Footer` aninhado)
+
+## 15/01/2026 - Formulário com múltiplas telas (etapas)
+
+- **🧩 Form builder agora suporta etapas**
+  - `lib/flow-form.ts` ganhou `steps` (retrocompatível) e gera `screens[]` com `navigate.next` entre etapas e `complete` no final
+  - Validação agora considera limite de \(50\) componentes **por etapa** e nomes únicos entre etapas
+
+- **🧭 UI de etapas no modo Formulário**
+  - `components/features/flows/builder/FlowFormBuilder.tsx` adiciona abas de **Etapas** + menu “⋯” para adicionar/remover etapa
+  - Cada etapa tem **título** e botão “Continuar” configurável (a última usa “Enviar”)
+
+- **📱 Preview suporta navegação oficial**
+  - `components/ui/MetaFlowPreview.tsx` agora entende `on-click-action.next.name` (além do fallback antigo via `payload.screen`)
+
+## 15/01/2026 - Wizard de agendamento
+
+- **🧭 UI simplificada no editor de agendamento**
+  - `components/features/flows/builder/dynamic-flow/BookingDynamicEditor.tsx` agora usa wizard com 4 passos
+  - Oculta o routing model por padrao e exibe em "Avancado"
+
+- **📱 Preview dinâmico com dados reais**
+  - `components/ui/MetaFlowPreview.tsx` resolve bindings `${data.*}` usando `__example__`
+  - Melhora a leitura da tela inicial no modo dinâmico
+
+- **🖱️ Edicao rapida direto no preview**
+  - `lib/dynamic-flow.ts` adiciona chaves de editor no JSON de agendamento
+  - `components/ui/MetaFlowPreview.tsx` permite clicar nos textos para editar
+
+- **🧊 Modo minimalista no editor**
+  - `components/features/flows/builder/dynamic-flow/BookingDynamicEditor.tsx` agora mostra apenas o botao "Editar textos"
+  - Configuracoes de servicos/data e routing ficam em "Avancado"
+
+- **🪟 Editor inline sem prompt**
+  - `app/(dashboard)/flows/builder/[id]/page.tsx` usa modal nativo do app para editar textos
+  - Evita erro de `prompt()` no ambiente do app
+
+- **🧹 Preview e avancado alinhados**
+  - `components/ui/MetaFlowPreview.tsx` agora reflete servicos do agendamento corretamente
+  - `components/features/flows/builder/dynamic-flow/BookingDynamicEditor.tsx` remove routing model do modo simples
+
+## 15/01/2026 - Ajuste de CTA no preview
+
+- **✅ CTA respeita campos obrigatorios**
+  - `components/ui/MetaFlowPreview.tsx` volta a bloquear o botao ate preencher
+
+- **🧼 Agendamento sem modo tecnico**
+  - `app/(dashboard)/flows/builder/[id]/page.tsx` oculta o editor tecnico no template de agendamento
+  - Mantem apenas o painel simples + preview clicavel
+
+- **🔗 Painel acompanha o preview**
+  - `components/features/flows/builder/dynamic-flow/BookingDynamicEditor.tsx` mostra campos da tela atual
+  - `components/ui/MetaFlowPreview.tsx` notifica a tela ativa no preview
+
+- **🖼️ Preview sempre visivel no modo dinamico**
+  - `app/(dashboard)/flows/builder/[id]/page.tsx` mostra o preview mesmo sem perguntas do formulario
+
+- **👀 Preview forçado no agendamento**
+  - `app/(dashboard)/flows/builder/[id]/page.tsx` mantém preview dinâmico sempre ativo no template de agendamento
+
+## 15/01/2026 - Spec dinâmico e geração dedicada
+
+- **🧩 Spec V1 para flows dinâmicos**
+  - `lib/dynamic-flow.ts` adiciona `DynamicFlowSpecV1`, normalização e geração de JSON dinâmico
+  - Garante ações por tela (data_exchange/navigate/complete) preservando payload e CTA
+
+- **🧭 Builder salva spec e regenera JSON**
+  - `app/(dashboard)/flows/builder/[id]/page.tsx` passa a persistir o spec dinâmico e gerar o JSON no preview/salvamento
+  - Mantém compatibilidade com flows dinâmicos legados salvos como `flowJson`
+
+- **🚀 Publish usa spec dinâmico atualizado**
+  - `app/api/flows/[id]/meta/publish/route.ts` gera o JSON a partir do spec dinâmico quando disponível
+  - Continua priorizando o config de agendamento para o template `agendamento_dinamico_v1`
+
+## 15/01/2026 - UX redesign completo (Progressive Disclosure)
+
+- **✨ Preview editável inline**
+  - Clique direto no preview para editar títulos, subtítulos, labels e botões
+  - `components/ui/MetaFlowPreview.tsx` resolve `${data.*}` e permite edição inline
+  - `components/ui/InlineEditableText.tsx` para edição contentEditable com hover states
+
+- **🎯 Menu de contexto**
+  - Botão direito no preview para ações rápidas (editar texto)
+  - `components/ui/ContextMenu.tsx` com design minimalista
+  - Preparado para adicionar/remover/duplicar campos no futuro
+
+- **🔧 Modo Avançado (Progressive Disclosure)**
+  - Botão discreto "Modo Avançado →" só aparece quando necessário
+  - `components/features/flows/builder/dynamic-flow/AdvancedFlowPanel.tsx` painel lateral para telas/routing
+  - Interface simples por padrão, complexidade escondida até ser necessária
+
+- **📱 Preview sempre visível**
+  - Preview dinâmico aparece automaticamente (sem exigir perguntas)
+  - Botão verde só habilita quando campos obrigatórios preenchidos
+  - Navegação entre telas funciona como app real
+
+- **🧹 Cleanup de UI confusa**
+  - `BookingDynamicEditor` agora tem apenas "Edição rápida" + "Configurações" colapsável
+  - Removido wizard com 4 passos (era redundante com preview)
+  - Removido "Tela atual" que duplicava informação
+
+- **🧩 Spec dinâmico V1**
+  - `lib/dynamic-flow.ts`: `DynamicFlowSpecV1`, normalização, validação e geração de JSON
+  - `generateDynamicFlowJson()` para flows genéricos
+  - `dynamicFlowSpecFromJson()` para converter JSON existente em spec
+
+- **🚀 Publish usa spec dinâmico**
+  - `app/api/flows/[id]/meta/publish/route.ts` prioriza `spec.dynamicFlow` e `spec.booking`
+  - Mantém compatibilidade com flows legados
+
 ## 15/01/2026 - MiniApps dinâmicos (agendamento)
 
 - **🔐 Health check (ping) agora retorna resposta CRIPTOGRAFADA**
@@ -129,6 +291,24 @@
 - **🧩 Clone de campanha usa rota correta**
   - `services/campaignService.ts` agora chama `/api/campaigns/:id/clone` (em vez de `/duplicate`)
   - `services/campaignService.test.ts` atualizado para refletir a rota
+
+## 15/01/2026 - Flow Builder
+
+- **👀 Preview do template dinâmico de agendamento**
+  - `components/ui/MetaFlowPreview.tsx` passa a renderizar componentes dentro de `Form`
+  - Corrige preview vazio ao selecionar "Agendamento (Google Calendar)"
+
+- **🧭 Preview alinhado ao editor**
+  - `app/(dashboard)/flows/builder/[id]/page.tsx` usa o form spec no preview
+  - Evita mostrar a tela dinâmica (BOOKING_START) quando o usuário edita as perguntas
+
+- **🔀 Alternância de prévia (dinâmico vs formulário)**
+  - `app/(dashboard)/flows/builder/[id]/page.tsx` permite alternar entre "Fluxo real" e "Formulário"
+  - Ajuda a comparar o passo inicial do agendamento com os campos finais
+
+- **🧪 Simulação local no preview Meta**
+  - `components/ui/MetaFlowPreview.tsx` agora permite navegar entre telas via routing_model
+  - CTA avança e o botão de fechar volta quando existe histórico
 
 ## 25/12/2025 - Debug (Run/Trace para campanhas)
 

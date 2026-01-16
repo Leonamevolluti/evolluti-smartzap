@@ -24,6 +24,14 @@ export type FlowFormFieldV1 = {
   text?: string
 }
 
+export type FlowFormStepV1 = {
+  id: string
+  title?: string
+  /** Apenas para o botão “continuar” das etapas intermediárias */
+  nextLabel?: string
+  fields: FlowFormFieldV1[]
+}
+
 export type FlowFormSpecV1 = {
   version: 1
   screenId: string
@@ -33,6 +41,8 @@ export type FlowFormSpecV1 = {
   sendConfirmation?: boolean
   confirmationTitle?: string
   confirmationFooter?: string
+  /** Multi-etapas (retrocompatível: se ausente, funciona como 1 tela) */
+  steps?: FlowFormStepV1[]
   fields: FlowFormFieldV1[]
 }
 
@@ -74,15 +84,13 @@ export function normalizeFlowFormSpec(input: unknown, fallbackTitle?: string): F
     sendConfirmation: true,
     confirmationTitle: '',
     confirmationFooter: '',
+    steps: undefined,
     fields: [],
   }
 
   if (!isPlainObject(input)) return defaults
 
-  const fieldsRaw = Array.isArray(input.fields) ? input.fields : []
-
-  const fields: FlowFormFieldV1[] = fieldsRaw
-    .map((f: any, idx: number): FlowFormFieldV1 | null => {
+  const normalizeField = (f: any, idx: number): FlowFormFieldV1 | null => {
       if (!f || typeof f !== 'object') return null
       const type = safeString(f.type) as FlowFormFieldType
       const allowed: FlowFormFieldType[] = [
@@ -136,8 +144,48 @@ export function normalizeFlowFormSpec(input: unknown, fallbackTitle?: string): F
       }
 
       return out
+  }
+
+  const stepsRaw = Array.isArray((input as any).steps) ? (input as any).steps : []
+  const steps: FlowFormStepV1[] = stepsRaw
+    .map((step: any, idx: number): FlowFormStepV1 | null => {
+      if (!step || typeof step !== 'object') return null
+      const fieldsRaw = Array.isArray(step.fields) ? step.fields : []
+      const fields = fieldsRaw.map((f: any, fidx: number) => normalizeField(f, fidx)).filter(Boolean) as FlowFormFieldV1[]
+      const id = safeString(step.id, `STEP_${idx + 1}`) || `STEP_${idx + 1}`
+      const title = safeString(step.title, '').trim()
+      const nextLabel = safeString(step.nextLabel, '').trim()
+      return {
+        id,
+        ...(title ? { title } : {}),
+        ...(nextLabel ? { nextLabel } : {}),
+        fields,
+      }
     })
+    .filter(Boolean) as FlowFormStepV1[]
+
+  const topFieldsRaw = Array.isArray((input as any).fields) ? (input as any).fields : []
+  const topFields: FlowFormFieldV1[] = topFieldsRaw
+    .map((f: any, idx: number) => normalizeField(f, idx))
     .filter(Boolean) as FlowFormFieldV1[]
+
+  const normalizedSteps =
+    steps.length > 0
+      ? steps
+      : [
+          {
+            id: 'STEP_1',
+            fields: topFields,
+          },
+        ]
+
+  const flattenedFields = normalizedSteps.flatMap((s) => s.fields)
+
+  const first = normalizedSteps[0] as any
+  const hasStepMeta =
+    normalizedSteps.length > 1 ||
+    !!String(first?.title || '').trim() ||
+    !!String(first?.nextLabel || '').trim()
 
   return {
     version: 1,
@@ -155,7 +203,8 @@ export function normalizeFlowFormSpec(input: unknown, fallbackTitle?: string): F
     confirmationFooter:
       safeString((input as any).confirmationFooter, defaults.confirmationFooter).trim() ||
       defaults.confirmationFooter,
-    fields,
+    steps: hasStepMeta ? normalizedSteps : undefined,
+    fields: flattenedFields,
   }
 }
 
@@ -182,118 +231,155 @@ export function flowJsonToFormSpec(flowJson: unknown, fallbackTitle?: string): F
   if (!flowJson || typeof flowJson !== 'object') return base
 
   const screens = Array.isArray((flowJson as any).screens) ? (flowJson as any).screens : []
-  const screen = screens[0]
-  const layout = screen?.layout
-  const children: FlowComponent[] = Array.isArray(layout?.children) ? layout.children : []
+  const firstScreen = screens[0]
+  const title = asText(firstScreen?.title).trim() || base.title
+  const screenId = asText(firstScreen?.id).trim() || base.screenId
 
-  const title = asText(screen?.title).trim() || base.title
-  const screenId = asText(screen?.id).trim() || base.screenId
+  function flatten(nodes: FlowComponent[]): FlowComponent[] {
+    const out: FlowComponent[] = []
+    for (const n of nodes) {
+      if (!n || typeof n !== 'object') continue
+      out.push(n)
+      const children = Array.isArray((n as any).children) ? ((n as any).children as FlowComponent[]) : null
+      if (children?.length) out.push(...flatten(children))
+    }
+    return out
+  }
 
-  const introNode = children.find((c) => c?.type === 'TextBody' || c?.type === 'BasicText' || c?.type === 'RichText')
+  function extractFieldsFromChildren(children: FlowComponent[]): FlowFormFieldV1[] {
+    const flat = flatten(children)
+    const fields: FlowFormFieldV1[] = []
+    for (const child of flat) {
+      const type = asText(child?.type)
+      if (!type) continue
+      if (type === 'Footer' || type === 'Form') continue
+      if (type === 'TextBody' || type === 'BasicText' || type === 'RichText' || type === 'TextHeading' || type === 'TextSubheading' || type === 'TextCaption') {
+        continue
+      }
+
+      if (type === 'TextArea') {
+        fields.push({
+          id: asText(child?.name || `q_${fields.length + 1}`) || `q_${fields.length + 1}`,
+          name: normalizeFlowFieldName(asText(child?.name || `campo_${fields.length + 1}`)),
+          label: asText(child?.label || 'Pergunta').trim() || 'Pergunta',
+          type: 'long_text',
+          required: !!child?.required,
+        })
+        continue
+      }
+
+      if (type === 'TextInput' || type === 'TextEntry') {
+        const inputType = asText(child?.['input-type'])
+        const mappedType: FlowFormFieldType =
+          inputType === 'email'
+            ? 'email'
+            : inputType === 'phone'
+              ? 'phone'
+              : inputType === 'number'
+                ? 'number'
+                : 'short_text'
+        fields.push({
+          id: asText(child?.name || `q_${fields.length + 1}`) || `q_${fields.length + 1}`,
+          name: normalizeFlowFieldName(asText(child?.name || `campo_${fields.length + 1}`)),
+          label: asText(child?.label || 'Pergunta').trim() || 'Pergunta',
+          type: mappedType,
+          required: !!child?.required,
+        })
+        continue
+      }
+
+      if (type === 'Dropdown') {
+        fields.push({
+          id: asText(child?.name || `q_${fields.length + 1}`) || `q_${fields.length + 1}`,
+          name: normalizeFlowFieldName(asText(child?.name || `campo_${fields.length + 1}`)),
+          label: asText(child?.label || 'Pergunta').trim() || 'Pergunta',
+          type: 'dropdown',
+          required: !!child?.required,
+          options: getOptions(child),
+        })
+        continue
+      }
+
+      if (type === 'RadioButtonsGroup') {
+        fields.push({
+          id: asText(child?.name || `q_${fields.length + 1}`) || `q_${fields.length + 1}`,
+          name: normalizeFlowFieldName(asText(child?.name || `campo_${fields.length + 1}`)),
+          label: asText(child?.label || 'Pergunta').trim() || 'Pergunta',
+          type: 'single_choice',
+          required: !!child?.required,
+          options: getOptions(child),
+        })
+        continue
+      }
+
+      if (type === 'CheckboxGroup') {
+        fields.push({
+          id: asText(child?.name || `q_${fields.length + 1}`) || `q_${fields.length + 1}`,
+          name: normalizeFlowFieldName(asText(child?.name || `campo_${fields.length + 1}`)),
+          label: asText(child?.label || 'Pergunta').trim() || 'Pergunta',
+          type: 'multi_choice',
+          required: !!child?.required,
+          options: getOptions(child),
+        })
+        continue
+      }
+
+      if (type === 'DatePicker' || type === 'CalendarPicker') {
+        fields.push({
+          id: asText(child?.name || `q_${fields.length + 1}`) || `q_${fields.length + 1}`,
+          name: normalizeFlowFieldName(asText(child?.name || `campo_${fields.length + 1}`)),
+          label: asText(child?.label || 'Pergunta').trim() || 'Pergunta',
+          type: 'date',
+          required: !!child?.required,
+        })
+        continue
+      }
+
+      if (type === 'OptIn') {
+        fields.push({
+          id: asText(child?.name || `q_${fields.length + 1}`) || `q_${fields.length + 1}`,
+          name: normalizeFlowFieldName(asText(child?.name || `campo_${fields.length + 1}`)),
+          label: asText(child?.text || child?.label || 'Opt-in').trim() || 'Opt-in',
+          type: 'optin',
+          required: false,
+          text: asText(child?.text || child?.label || '').trim(),
+        })
+        continue
+      }
+    }
+    return fields
+  }
+
+  const steps: FlowFormStepV1[] = []
+  for (const [idx, s] of screens.entries()) {
+    const layout = s?.layout
+    const children: FlowComponent[] = Array.isArray(layout?.children) ? layout.children : []
+    const fields = extractFieldsFromChildren(children)
+    const footerNode = flatten(children).find((c) => c?.type === 'Footer')
+    const ctaLabel = footerNode ? asText(footerNode.label).trim() : ''
+    steps.push({
+      id: `STEP_${idx + 1}`,
+      title: asText(s?.title).trim() || (idx === 0 ? title : ''),
+      ...(idx < screens.length - 1 && ctaLabel ? { nextLabel: ctaLabel } : {}),
+      fields,
+    })
+  }
+
+  const firstChildren: FlowComponent[] = Array.isArray(firstScreen?.layout?.children) ? firstScreen.layout.children : []
+  const introNode = flatten(firstChildren).find((c) => c?.type === 'TextBody' || c?.type === 'BasicText' || c?.type === 'RichText')
   const intro = introNode ? asText(introNode.text).trim() : base.intro
 
-  const footerNode = children.find((c) => c?.type === 'Footer')
-  const submitLabel = footerNode ? asText(footerNode.label).trim() || base.submitLabel : base.submitLabel
-  const footerPayload = footerNode?.['on-click-action']?.payload || {}
+  const lastScreen = screens[screens.length - 1]
+  const lastChildren: FlowComponent[] = Array.isArray(lastScreen?.layout?.children) ? lastScreen.layout.children : []
+  const lastFooterNode = flatten(lastChildren).find((c) => c?.type === 'Footer')
+  const submitLabel = lastFooterNode ? asText(lastFooterNode.label).trim() || base.submitLabel : base.submitLabel
+  const footerPayload = lastFooterNode?.['on-click-action']?.payload || {}
   const sendConfirmation =
     typeof footerPayload?.send_confirmation === 'boolean'
       ? footerPayload.send_confirmation !== false
       : true
   const confirmationTitle = asText(footerPayload?.confirmation_title || '').trim()
   const confirmationFooter = asText(footerPayload?.confirmation_footer || '').trim()
-
-  const fields: FlowFormFieldV1[] = []
-  for (const child of children) {
-    const type = asText(child?.type)
-    if (type === 'Footer' || type === 'TextBody' || type === 'BasicText' || type === 'RichText') continue
-
-    if (type === 'TextArea') {
-      fields.push({
-        id: asText(child?.name || `q_${fields.length + 1}`) || `q_${fields.length + 1}`,
-        name: normalizeFlowFieldName(asText(child?.name || `campo_${fields.length + 1}`)),
-        label: asText(child?.label || 'Pergunta').trim() || 'Pergunta',
-        type: 'long_text',
-        required: !!child?.required,
-      })
-      continue
-    }
-
-    if (type === 'TextInput' || type === 'TextEntry') {
-      const inputType = asText(child?.['input-type'])
-      const mappedType: FlowFormFieldType =
-        inputType === 'email' ? 'email' :
-        inputType === 'phone' ? 'phone' :
-        inputType === 'number' ? 'number' :
-        'short_text'
-      fields.push({
-        id: asText(child?.name || `q_${fields.length + 1}`) || `q_${fields.length + 1}`,
-        name: normalizeFlowFieldName(asText(child?.name || `campo_${fields.length + 1}`)),
-        label: asText(child?.label || 'Pergunta').trim() || 'Pergunta',
-        type: mappedType,
-        required: !!child?.required,
-      })
-      continue
-    }
-
-    if (type === 'Dropdown') {
-      fields.push({
-        id: asText(child?.name || `q_${fields.length + 1}`) || `q_${fields.length + 1}`,
-        name: normalizeFlowFieldName(asText(child?.name || `campo_${fields.length + 1}`)),
-        label: asText(child?.label || 'Pergunta').trim() || 'Pergunta',
-        type: 'dropdown',
-        required: !!child?.required,
-        options: getOptions(child),
-      })
-      continue
-    }
-
-    if (type === 'RadioButtonsGroup') {
-      fields.push({
-        id: asText(child?.name || `q_${fields.length + 1}`) || `q_${fields.length + 1}`,
-        name: normalizeFlowFieldName(asText(child?.name || `campo_${fields.length + 1}`)),
-        label: asText(child?.label || 'Pergunta').trim() || 'Pergunta',
-        type: 'single_choice',
-        required: !!child?.required,
-        options: getOptions(child),
-      })
-      continue
-    }
-
-    if (type === 'CheckboxGroup') {
-      fields.push({
-        id: asText(child?.name || `q_${fields.length + 1}`) || `q_${fields.length + 1}`,
-        name: normalizeFlowFieldName(asText(child?.name || `campo_${fields.length + 1}`)),
-        label: asText(child?.label || 'Pergunta').trim() || 'Pergunta',
-        type: 'multi_choice',
-        required: !!child?.required,
-        options: getOptions(child),
-      })
-      continue
-    }
-
-    if (type === 'DatePicker') {
-      fields.push({
-        id: asText(child?.name || `q_${fields.length + 1}`) || `q_${fields.length + 1}`,
-        name: normalizeFlowFieldName(asText(child?.name || `campo_${fields.length + 1}`)),
-        label: asText(child?.label || 'Pergunta').trim() || 'Pergunta',
-        type: 'date',
-        required: !!child?.required,
-      })
-      continue
-    }
-
-    if (type === 'OptIn') {
-      fields.push({
-        id: asText(child?.name || `q_${fields.length + 1}`) || `q_${fields.length + 1}`,
-        name: normalizeFlowFieldName(asText(child?.name || `campo_${fields.length + 1}`)),
-        label: asText(child?.text || child?.label || 'Opt-in').trim() || 'Opt-in',
-        type: 'optin',
-        required: false,
-        text: asText(child?.text || child?.label || '').trim(),
-      })
-      continue
-    }
-  }
 
   return normalizeFlowFormSpec(
     {
@@ -304,145 +390,163 @@ export function flowJsonToFormSpec(flowJson: unknown, fallbackTitle?: string): F
       confirmationTitle,
       confirmationFooter,
       sendConfirmation,
-      fields,
+      steps: steps.length > 1 ? steps : undefined,
+      fields: steps.length > 0 ? steps[0]?.fields || [] : [],
     },
     fallbackTitle,
   )
 }
 
 export function generateFlowJsonFromFormSpec(form: FlowFormSpecV1): Record<string, unknown> {
-  const children: any[] = []
+  const steps: FlowFormStepV1[] =
+    Array.isArray(form.steps) && form.steps.length > 0
+      ? form.steps
+      : [
+          {
+            id: 'STEP_1',
+            fields: form.fields,
+          },
+        ]
 
-  if (form.intro && form.intro.trim()) {
-    children.push({
-      type: 'TextBody',
-      text: form.intro.trim(),
-    })
-  }
+  const baseScreenId = normalizeScreenId(form.screenId)
+  const screenIdForStep = (idx: number) => (idx === 0 ? baseScreenId : `${baseScreenId}_${idx + 1}`)
 
-  for (const field of form.fields) {
+  const renderField = (field: FlowFormFieldV1): any => {
     if (field.type === 'optin') {
-      children.push({
+      return {
         type: 'OptIn',
         name: field.name,
         label: (field.text || field.label || '').trim() || 'Quero receber mensagens',
-      })
-      continue
+      }
     }
-
     if (field.type === 'dropdown') {
-      children.push({
+      return {
         type: 'Dropdown',
         name: field.name,
         label: field.label,
         required: !!field.required,
         'data-source': Array.isArray(field.options) ? field.options : [],
-      })
-      continue
+      }
     }
-
     if (field.type === 'single_choice') {
-      children.push({
+      return {
         type: 'RadioButtonsGroup',
         name: field.name,
         label: field.label,
         required: !!field.required,
         'data-source': Array.isArray(field.options) ? field.options : [],
-      })
-      continue
+      }
     }
-
     if (field.type === 'multi_choice') {
-      children.push({
+      return {
         type: 'CheckboxGroup',
         name: field.name,
         label: field.label,
         required: !!field.required,
         'data-source': Array.isArray(field.options) ? field.options : [],
-      })
-      continue
+      }
     }
-
     if (field.type === 'date') {
-      children.push({
+      return {
         type: 'DatePicker',
         name: field.name,
         label: field.label,
         required: !!field.required,
-      })
-      continue
+      }
     }
-
     if (field.type === 'number') {
-      children.push({
+      return {
         type: 'TextInput',
         name: field.name,
         label: field.label,
         required: !!field.required,
         'input-type': 'number',
-      })
-      continue
+      }
     }
-
     if (field.type === 'long_text') {
-      children.push({
+      return {
         type: 'TextArea',
         name: field.name,
         label: field.label,
         required: !!field.required,
-      })
-      continue
+      }
     }
-
     // short_text, email, phone (e outros) como TextInput
-    children.push({
+    return {
       type: 'TextInput',
       name: field.name,
       label: field.label,
       required: !!field.required,
       ...(field.type === 'email' ? { 'input-type': 'email' } : {}),
       ...(field.type === 'phone' ? { 'input-type': 'phone' } : {}),
-    })
+    }
   }
 
-  // Monta o payload com todos os campos do formulário
-  // A sintaxe ${form.CAMPO} é como a Meta referencia valores dos inputs
-  const payload: Record<string, string> = {}
-  for (const field of form.fields) {
-    payload[field.name] = `\${form.${field.name}}`
+  const allFields = steps.flatMap((s) => s.fields)
+
+  // payload final (complete)
+  const completePayload: Record<string, string> = {}
+  for (const field of allFields) {
+    completePayload[field.name] = `\${form.${field.name}}`
   }
   if (form.sendConfirmation === false) {
-    payload.send_confirmation = 'false'
+    completePayload.send_confirmation = 'false'
   }
   if (form.confirmationTitle && form.confirmationTitle.trim()) {
-    payload.confirmation_title = form.confirmationTitle.trim()
+    completePayload.confirmation_title = form.confirmationTitle.trim()
   }
   if (form.confirmationFooter && form.confirmationFooter.trim()) {
-    payload.confirmation_footer = form.confirmationFooter.trim()
+    completePayload.confirmation_footer = form.confirmationFooter.trim()
   }
 
-  children.push({
-    type: 'Footer',
-    label: form.submitLabel || 'Enviar',
-    'on-click-action': {
-      name: 'complete',
-      payload,
-    },
+  const screens = steps.map((step, idx) => {
+    const children: any[] = []
+    if (idx === 0 && form.intro && form.intro.trim()) {
+      children.push({ type: 'TextBody', text: form.intro.trim() })
+    }
+    for (const f of step.fields) children.push(renderField(f))
+
+    const isLast = idx === steps.length - 1
+    if (isLast) {
+      children.push({
+        type: 'Footer',
+        label: form.submitLabel || 'Enviar',
+        'on-click-action': {
+          name: 'complete',
+          payload: completePayload,
+        },
+      })
+    } else {
+      const nextId = screenIdForStep(idx + 1)
+      const payload: Record<string, string> = {}
+      for (const f of step.fields) {
+        payload[f.name] = `\${form.${f.name}}`
+      }
+      children.push({
+        type: 'Footer',
+        label: step.nextLabel || 'Continuar',
+        'on-click-action': {
+          name: 'navigate',
+          next: { type: 'screen', name: nextId },
+          ...(Object.keys(payload).length ? { payload } : {}),
+        },
+      })
+    }
+
+    return {
+      id: screenIdForStep(idx),
+      title: (step.title || form.title || 'Formulário').trim() || 'Formulário',
+      terminal: isLast,
+      layout: {
+        type: 'SingleColumnLayout',
+        children,
+      },
+    }
   })
 
   return {
     version: '7.3',
-    screens: [
-      {
-        id: form.screenId,
-        title: form.title,
-        terminal: true,
-        layout: {
-          type: 'SingleColumnLayout',
-          children,
-        },
-      },
-    ],
+    screens,
   }
 }
 
@@ -452,8 +556,22 @@ export function validateFlowFormSpec(form: FlowFormSpecV1): string[] {
   if (!form.title.trim()) issues.push('Defina um título para o formulário')
   if (!form.screenId.trim()) issues.push('Defina um ID de tela (screenId)')
 
+  const steps: FlowFormStepV1[] =
+    Array.isArray(form.steps) && form.steps.length > 0
+      ? form.steps
+      : [
+          {
+            id: 'STEP_1',
+            fields: form.fields,
+          },
+        ]
+
+  if (!steps.length) issues.push('Adicione pelo menos 1 etapa')
+
   const names = new Set<string>()
-  for (const f of form.fields) {
+  for (const [sidx, step] of steps.entries()) {
+    const fields = Array.isArray(step.fields) ? step.fields : []
+    for (const f of fields) {
     if (!f.label.trim()) issues.push('Existe uma pergunta sem título')
     if (!f.name.trim()) issues.push(`A pergunta "${f.label}" está sem identificador (name)`) 
 
@@ -466,12 +584,14 @@ export function validateFlowFormSpec(form: FlowFormSpecV1): string[] {
     if ((f.type === 'dropdown' || f.type === 'single_choice' || f.type === 'multi_choice') && (!f.options || f.options.length < 1)) {
       issues.push(`Campo "${f.label}": adicione pelo menos 1 opção`)
     }
-  }
+    }
 
-  // Máximo recomendado pela Meta: 50 componentes por tela.
-  // Aqui: intro (0/1) + campos + footer.
-  const componentCount = (form.intro?.trim() ? 1 : 0) + form.fields.length + 1
-  if (componentCount > 50) issues.push(`Muitos campos para uma única tela (${componentCount}/50). Divida em mais de 1 tela.`)
+    // Máximo recomendado pela Meta: 50 componentes por tela.
+    const componentCount = (sidx === 0 && form.intro?.trim() ? 1 : 0) + fields.length + 1
+    if (componentCount > 50) {
+      issues.push(`Etapa ${sidx + 1}: muitos campos para uma única tela (${componentCount}/50). Adicione outra etapa.`)
+    }
+  }
 
   return issues
 }

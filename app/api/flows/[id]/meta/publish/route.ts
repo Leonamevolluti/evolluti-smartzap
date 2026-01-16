@@ -19,6 +19,7 @@ import {
 } from '@/lib/meta-flows-api'
 import { MetaGraphApiError } from '@/lib/meta-flows-api'
 import { generateFlowJsonFromFormSpec, normalizeFlowFormSpec, validateFlowFormSpec } from '@/lib/flow-form'
+import { generateBookingDynamicFlowJson, generateDynamicFlowJson, normalizeDynamicFlowSpec } from '@/lib/dynamic-flow'
 import { validateMetaFlowJson } from '@/lib/meta-flow-json-validator'
 import { settingsDb } from '@/lib/supabase-db'
 
@@ -28,8 +29,23 @@ import { settingsDb } from '@/lib/supabase-db'
 function isDynamicFlow(flowJson: unknown): boolean {
   if (!flowJson || typeof flowJson !== 'object') return false
   const json = flowJson as Record<string, unknown>
-  // Flow JSON 3.0+ com data_api_version indica flow dinamico
-  return json.data_api_version === '3.0'
+  const screens = Array.isArray((json as any).screens) ? (json as any).screens : []
+  for (const s of screens) {
+    const layout = s && typeof s === 'object' ? (s as any).layout : null
+    const children = layout && typeof layout === 'object' && Array.isArray((layout as any).children) ? (layout as any).children : []
+    const stack = [...children]
+    while (stack.length) {
+      const node = stack.pop()
+      if (!node || typeof node !== 'object') continue
+      const action = (node as any)['on-click-action']
+      if (action && typeof action === 'object' && String((action as any).name || '').toLowerCase() === 'data_exchange') {
+        return true
+      }
+      const nested = Array.isArray((node as any).children) ? (node as any).children : null
+      if (nested?.length) stack.push(...nested)
+    }
+  }
+  return false
 }
 
 const ENDPOINT_URL_SETTING = 'whatsapp_flow_endpoint_url'
@@ -52,9 +68,6 @@ async function getFlowEndpointUrl(): Promise<string | null> {
         : null
   const storedEndpointUrl = await settingsDb.get(ENDPOINT_URL_SETTING)
   const resolved = envEndpointUrl || storedEndpointUrl || null
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H6',location:'app/api/flows/[id]/meta/publish/route.ts:55',message:'flow endpoint url resolved',data:{hasEnvEndpointUrl:Boolean(envEndpointUrl),hasStoredEndpointUrl:Boolean(storedEndpointUrl),hasResolvedEndpointUrl:Boolean(resolved)},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion agent log
   return resolved
 }
 
@@ -74,8 +87,24 @@ function extractFlowJson(row: any): unknown {
       ? (savedFlowJson as Record<string, unknown>).data_api_version
       : null
 
+  const specDynamic = row?.spec?.dynamicFlow
+  if (specDynamic && typeof specDynamic === 'object') {
+    if ((specDynamic as any).flowJson && typeof (specDynamic as any).flowJson === 'object') {
+      return (specDynamic as any).flowJson
+    }
+    if (Array.isArray((specDynamic as any).screens)) {
+      const normalized = normalizeDynamicFlowSpec(specDynamic)
+      return generateDynamicFlowJson(normalized)
+    }
+  }
+
+  const specBooking = row?.spec?.booking
+  if (specBooking && typeof specBooking === 'object') {
+    return generateBookingDynamicFlowJson(specBooking)
+  }
+
   // Se o flow_json salvo for dinâmico, preserve-o para não perder data_exchange.
-  if (savedDataApiVersion === '3.0') {
+  if (savedDataApiVersion === '3.0' && isDynamicFlow(savedFlowJson)) {
     return savedFlowJson
   }
 
@@ -100,15 +129,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const { id } = await ctx.params
   let wantsDebug = false
   const debugInfo: Record<string, unknown> = {}
+  let credentials: Awaited<ReturnType<typeof getWhatsAppCredentials>> | null = null
 
   try {
     const input = PublishSchema.parse(await req.json().catch(() => ({})))
     wantsDebug = req.headers.get('x-debug-client') === '1'
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'ultra-logging',hypothesisId:'H1',location:'app/api/flows/[id]/meta/publish/route.ts:104',message:'publish request parsed',data:{flowId:id,wantsDebug,updateIfExists:input.updateIfExists,publish:input.publish,categoriesCount:input.categories.length},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion agent log
 
-    const credentials = await getWhatsAppCredentials()
+    credentials = await getWhatsAppCredentials()
     if (!credentials?.accessToken || !credentials.businessAccountId) {
       return NextResponse.json(
         {
@@ -125,9 +152,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         { status: 400 }
       )
     }
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H10',location:'app/api/flows/[id]/meta/publish/route.ts:96',message:'whatsapp credentials resolved',data:{hasAccessToken:Boolean(credentials?.accessToken),wabaId:credentials?.businessAccountId ?? null,hasPhoneNumberId:Boolean(credentials?.phoneNumberId)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion agent log
 
     // Busca o flow local
     const { data, error } = await supabase.from('flows').select('*').eq('id', id).limit(1)
@@ -140,16 +164,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const flowJsonObj = flowJson && typeof flowJson === 'object' ? (flowJson as Record<string, unknown>) : null
     debugInfo.flowJsonVersion = (flowJsonObj as any)?.version ?? null
     debugInfo.flowJsonDataApiVersion = (flowJsonObj as any)?.data_api_version ?? null
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'ultra-logging',hypothesisId:'H2',location:'app/api/flows/[id]/meta/publish/route.ts:136',message:'publish flow snapshot',data:{flowId:id,hasSpecForm:Boolean(row?.spec?.form),hasSavedFlowJson:Boolean(row?.flow_json),metaFlowId:row?.meta_flow_id ?? null,flowJsonVersion:(flowJson as any)?.version ?? null,flowJsonDataApiVersion:(flowJson as any)?.data_api_version ?? null},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion agent log
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1',location:'app/api/flows/[id]/meta/publish/route.ts:104',message:'extractFlowJson result',data:{flowId:id,hasSpecForm:Boolean(row?.spec?.form),hasFlowJson:Boolean(row?.flow_json),flowJsonVersion:(flowJson as any)?.version ?? null,flowJsonDataApiVersion:(flowJson as any)?.data_api_version ?? null},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion agent log
+    try {
+      const screens = Array.isArray((flowJsonObj as any)?.screens) ? (flowJsonObj as any).screens : []
+      const hasRoutingModel = !!(flowJsonObj as any)?.routing_model
+      const screenIds = screens.map((s: any) => String(s?.id || '')).filter(Boolean).slice(0, 6)
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'meta-publish',hypothesisId:'H1',location:'app/api/flows/[id]/meta/publish/route.ts:extractFlowJson',message:'flowJson summary',data:{flowId:id,version:(flowJsonObj as any)?.version ?? null,dataApiVersion:(flowJsonObj as any)?.data_api_version ?? null,hasRoutingModel,screenCount:screens.length,screenIds},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion agent log
+    } catch {}
+
+    const isDynamic = isDynamicFlow(flowJson)
 
     // Validação “local” (rápida) para evitar publicar algo obviamente inválido.
     // A validação oficial é da Meta e vem em validation_errors.
-    const formIssues = row?.spec?.form ? validateFlowFormSpec(normalizeFlowFormSpec(row.spec.form, row?.name || 'Flow')) : []
+    const formIssues =
+      !isDynamic && row?.spec?.form
+        ? validateFlowFormSpec(normalizeFlowFormSpec(row.spec.form, row?.name || 'Flow'))
+        : []
     if (formIssues.length > 0) {
       return NextResponse.json(
         {
@@ -163,19 +194,18 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     // Validação do schema do Flow JSON (mais próximo do que a Meta espera) antes de chamar a Graph API.
     // Isso evita o "(100) Invalid parameter" sem contexto.
     let localValidation = validateMetaFlowJson(flowJson)
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H2',location:'app/api/flows/[id]/meta/publish/route.ts:124',message:'local validation result',data:{flowId:id,isValid:localValidation.isValid,issuesCount:Array.isArray((localValidation as any)?.issues)?(localValidation as any).issues.length:null,usesDataApiVersion:((flowJson as any)?.data_api_version === '3.0')},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion agent log
+    try {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'meta-publish',hypothesisId:'H2',location:'app/api/flows/[id]/meta/publish/route.ts:validateMetaFlowJson',message:'local validation result',data:{flowId:id,isValid:!!localValidation.isValid,errorsCount:Array.isArray(localValidation.errors)?localValidation.errors.length:null,warningsCount:Array.isArray(localValidation.warnings)?localValidation.warnings.length:null,errorsPreview:Array.isArray(localValidation.errors)?localValidation.errors.slice(0,3):null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion agent log
+    } catch {}
     if (!localValidation.isValid) {
       const errors = Array.isArray(localValidation.errors) ? localValidation.errors.slice(0, 6) : []
       const warnings = Array.isArray(localValidation.warnings) ? localValidation.warnings.slice(0, 6) : []
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H5',location:'app/api/flows/[id]/meta/publish/route.ts:131',message:'local validation details',data:{flowId:id,errorsCount:Array.isArray(localValidation.errors)?localValidation.errors.length:null,warningsCount:Array.isArray(localValidation.warnings)?localValidation.warnings.length:null,errors, warnings},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion agent log
     }
 
     // Se o flow_json persistido estiver legado/inválido, tentamos regenerar do spec.form automaticamente.
-    if (!localValidation.isValid && row?.spec?.form) {
+    if (!isDynamic && !localValidation.isValid && row?.spec?.form) {
       const normalized = normalizeFlowFormSpec(row.spec.form, row?.name || 'Flow')
       const regenerated = generateFlowJsonFromFormSpec(normalized)
       const regeneratedValidation = validateMetaFlowJson(regenerated)
@@ -215,27 +245,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     let previewUrl: string | null = null
 
     if (!metaFlowId) {
-      // Verifica se e um flow dinamico e precisa de endpoint
+      // A Meta exige `endpoint_uri` para Flows "de endpoint" (data_api_version/routing_model).
+      // `dynamic` aqui significa "usa data_exchange"; `requiresEndpoint` cobre routing_model também.
       const dynamic = isDynamicFlow(flowJson)
+      const requiresEndpoint =
+        (flowJsonObj as any)?.data_api_version === '3.0' || isPlainObject((flowJsonObj as any)?.routing_model)
       let endpointUri: string | undefined
       debugInfo.dynamic = dynamic
+      debugInfo.requiresEndpoint = requiresEndpoint
 
-      if (dynamic) {
+      if (requiresEndpoint) {
         const url = await getFlowEndpointUrl()
         debugInfo.endpointUrl = url ?? null
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'ultra-logging',hypothesisId:'H3',location:'app/api/flows/[id]/meta/publish/route.ts:214',message:'dynamic endpoint resolved',data:{flowId:id,hasEndpointUrl:Boolean(url),endpointHost:url ? (()=>{try{return new URL(url).host}catch{return null}})() : null},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion agent log
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H3',location:'app/api/flows/[id]/meta/publish/route.ts:172',message:'dynamic flow endpoint resolution',data:{flowId:id,hasEndpointUrl:Boolean(url)},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion agent log
         if (!url) {
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H3',location:'app/api/flows/[id]/meta/publish/route.ts:176',message:'dynamic flow missing endpoint',data:{flowId:id},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion agent log
           return NextResponse.json(
             {
-              error: 'Flow dinamico requer endpoint configurado. Va em Configuracoes > MiniApp Dinamico e gere as chaves.',
+              error:
+                'Este Flow requer endpoint (data_api_version/routing_model). Configure em Configurações > MiniApp Dinâmico e use uma URL pública (localhost não funciona para publicar).',
             },
             { status: 400 }
           )
@@ -243,12 +269,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         endpointUri = url
       }
 
-      if (dynamic) {
+      if (requiresEndpoint) {
         const publicKey = await settingsDb.get(PUBLIC_KEY_SETTING)
         const hasPublicKey = Boolean(publicKey)
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H9',location:'app/api/flows/[id]/meta/publish/route.ts:198',message:'flow public key status',data:{flowId:id,hasPublicKey},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion agent log
         if (!publicKey) {
           return NextResponse.json(
             {
@@ -273,9 +296,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         const needsRegistration = !normalizedMetaKey || normalizedMetaKey !== normalizedLocalKey
         debugInfo.publicKeyMatchesMeta = !needsRegistration
         debugInfo.publicKeySignatureStatus = existingKey.signatureStatus ?? null
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H9',location:'app/api/flows/[id]/meta/publish/route.ts:214',message:'flow public key registration check',data:{flowId:id,hasExistingKey:Boolean(existingKey.publicKey),needsRegistration},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion agent log
         if (needsRegistration) {
           debugInfo.publicKeyRegistrationAttempted = true
           await metaSetEncryptionPublicKey({
@@ -285,9 +305,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           })
           debugInfo.publicKeyRegistrationAttempted = true
           debugInfo.publicKeyRegistrationSuccess = true
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H9',location:'app/api/flows/[id]/meta/publish/route.ts:229',message:'flow public key registered',data:{flowId:id},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion agent log
 
           const refreshedKey = await metaGetEncryptionPublicKey({
             accessToken: credentials.accessToken,
@@ -315,12 +332,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
       const screens = Array.isArray((flowJsonObj as any)?.screens) ? (flowJsonObj as any).screens : []
       const screenIds = screens.map((s: any) => String(s?.id || '')).filter(Boolean).slice(0, 6)
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'ultra-logging',hypothesisId:'H4',location:'app/api/flows/[id]/meta/publish/route.ts:268',message:'meta create flow summary',data:{flowId:id,hasEndpointUri:Boolean(endpointUri),dataApiVersion:(flowJsonObj as any)?.data_api_version ?? null,flowJsonVersion:(flowJsonObj as any)?.version ?? null,screensCount:Array.isArray(screens)?screens.length:null,screenIds},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion agent log
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H6',location:'app/api/flows/[id]/meta/publish/route.ts:189',message:'meta create flow payload summary',data:{flowId:id,hasEndpointUri:Boolean(endpointUri),dataApiVersion:(flowJsonObj as any)?.data_api_version ?? null,flowJsonVersion:(flowJsonObj as any)?.version ?? null,screensCount:Array.isArray(screens)?screens.length:null,screenIds},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion agent log
 
       // Criar na Meta (com publish opcional em um único request)
       const baseName = String(row?.name || 'Flow').trim() || 'Flow'
@@ -335,6 +346,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
       let created
       try {
+        try {
+          const hasRoutingModel = !!(flowJsonObj as any)?.routing_model
+          // #region agent log
+          fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'meta-publish',hypothesisId:'H3',location:'app/api/flows/[id]/meta/publish/route.ts:metaCreateFlow',message:'creating flow on Meta',data:{flowId:id,publish:!!input.publish,dynamic,hasRoutingModel,dataApiVersion:(flowJsonObj as any)?.data_api_version ?? null,screenIds},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion agent log
+        } catch {}
         created = await metaCreateFlow({
           accessToken: credentials.accessToken,
           wabaId: credentials.businessAccountId,
@@ -353,9 +370,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
             const retrySuffix = ` #${String(id).slice(0, 6)}-${Date.now().toString().slice(-4)}`
             const retryName = buildUniqueName(retrySuffix)
             debugInfo.createNameRetry = retryName
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'ultra-logging',hypothesisId:'H6',location:'app/api/flows/[id]/meta/publish/route.ts:312',message:'retry create flow with unique name',data:{flowId:id,retryName},timestamp:Date.now()})}).catch(()=>{});
-            // #endregion agent log
             created = await metaCreateFlow({
               accessToken: credentials.accessToken,
               wabaId: credentials.businessAccountId,
@@ -375,9 +389,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
       metaFlowId = created.id
       validationErrors = created.validation_errors ?? null
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'ultra-logging',hypothesisId:'H5',location:'app/api/flows/[id]/meta/publish/route.ts:289',message:'meta create flow response',data:{flowId:id,metaFlowId,validationErrorsCount:Array.isArray((created as any)?.validation_errors)?(created as any).validation_errors.length:null},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion agent log
+      try {
+        const ve = validationErrors as any
+        const veCount = Array.isArray(ve) ? ve.length : ve && typeof ve === 'object' && Array.isArray(ve.errors) ? ve.errors.length : null
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'meta-publish',hypothesisId:'H5',location:'app/api/flows/[id]/meta/publish/route.ts:metaCreateFlow',message:'created flow result',data:{flowId:id,metaFlowId,metaStatusFromCreate:(created as any)?.status ?? null,validationErrorsCount:veCount},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion agent log
+      } catch {}
 
       // Atualiza detalhes (status etc.)
       const details = await metaGetFlowDetails({ accessToken: credentials.accessToken, flowId: metaFlowId })
@@ -468,6 +486,51 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Falha ao publicar Flow'
+    if (error instanceof MetaGraphApiError) {
+      try {
+        const graphError = (error.data as any)?.error ?? error.data
+        const code = graphError?.code ?? null
+        const subcode = graphError?.error_subcode ?? null
+        const errorUserTitle = graphError?.error_user_title ?? null
+        const errorUserMsg = graphError?.error_user_msg ?? null
+        const validationErrors = (graphError as any)?.validation_errors ?? (graphError as any)?.validationErrors ?? null
+        const preview =
+          Array.isArray(validationErrors)
+            ? validationErrors.slice(0, 4)
+            : validationErrors && typeof validationErrors === 'object' && Array.isArray((validationErrors as any).errors)
+              ? (validationErrors as any).errors.slice(0, 4)
+              : null
+        // Quando a Meta cria o flow mas falha ao publicar (139002), ela às vezes só devolve o Flow ID no texto.
+        // Vamos buscar detalhes para capturar validation_errors reais.
+        let createdFlowIdFromMsg: string | null = null
+        if (typeof errorUserMsg === 'string') {
+          const m = errorUserMsg.match(/Flow ID:\s*([0-9]+)/i)
+          createdFlowIdFromMsg = m?.[1] ? String(m[1]) : null
+        }
+        if (createdFlowIdFromMsg) {
+          try {
+            const accessToken = credentials?.accessToken
+            if (!accessToken) throw new Error('missing credentials.accessToken')
+            const details = await metaGetFlowDetails({ accessToken, flowId: createdFlowIdFromMsg })
+            const ve = (details as any)?.validation_errors ?? (details as any)?.validationErrors ?? null
+            const vePreview = Array.isArray(ve) ? ve.slice(0, 6) : ve && typeof ve === 'object' ? ve : null
+            // #region agent log
+            fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'meta-publish',hypothesisId:'H6',location:'app/api/flows/[id]/meta/publish/route.ts:catch',message:'fetched created flow details after publish fail',data:{createdFlowId:createdFlowIdFromMsg,status:(details as any)?.status ?? null,hasValidationErrors:Array.isArray(ve)?ve.length>0:!!ve,validationErrorsPreview:vePreview},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion agent log
+            debugInfo.createdFlowIdFromPublishFail = createdFlowIdFromMsg
+            debugInfo.createdFlowDetailsStatus = (details as any)?.status ?? null
+            debugInfo.createdFlowValidationErrors = vePreview
+          } catch (e) {
+            // #region agent log
+            fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'meta-publish',hypothesisId:'H6',location:'app/api/flows/[id]/meta/publish/route.ts:catch',message:'failed to fetch created flow details after publish fail',data:{createdFlowId:createdFlowIdFromMsg,error:e instanceof Error?e.message:String(e)},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion agent log
+          }
+        }
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'meta-publish',hypothesisId:'H4',location:'app/api/flows/[id]/meta/publish/route.ts:catch',message:'MetaGraphApiError',data:{status:error.status ?? null,code,subcode,errorUserTitle,errorUserMsg,validationErrorsPreview:preview},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion agent log
+      } catch {}
+    }
 
     // Em dev, devolvemos detalhes do erro da Graph API para facilitar debug (sem incluir token).
     if ((process.env.NODE_ENV !== 'production' || wantsDebug) && error instanceof MetaGraphApiError) {
@@ -492,9 +555,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
     if (error instanceof MetaGraphApiError) {
       const graphError = (error.data as any)?.error ?? error.data
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H7',location:'app/api/flows/[id]/meta/publish/route.ts:294',message:'meta graph error',data:{status:error.status,code:graphError?.code ?? null,subcode:graphError?.error_subcode ?? null,message:graphError?.message ?? null,fbtraceId:graphError?.fbtrace_id ?? null},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion agent log
       if (wantsDebug) {
         return NextResponse.json(
           {

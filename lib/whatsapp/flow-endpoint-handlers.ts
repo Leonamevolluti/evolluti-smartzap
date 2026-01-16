@@ -151,6 +151,11 @@ type CalendarPickerData = {
   unavailableDates: string[]
 }
 
+type AvailableDateOption = {
+  id: string
+  title: string
+}
+
 /**
  * Dados para CalendarPicker (min/max e dias permitidos)
  */
@@ -189,6 +194,32 @@ async function getCalendarPickerData(): Promise<CalendarPickerData> {
     includeDays,
     unavailableDates,
   }
+}
+
+async function getAvailableDates(): Promise<AvailableDateOption[]> {
+  const config = await getCalendarBookingConfig()
+  const timeZone = config.timezone
+  const maxAdvanceDays = config.maxAdvanceDays ?? 14
+
+  const todayStr = formatInTimeZone(new Date(), timeZone, 'yyyy-MM-dd')
+  const [year, month, day] = todayStr.split('-').map(Number)
+
+  const dates: AvailableDateOption[] = []
+  for (let dayOffset = 0; dayOffset <= maxAdvanceDays; dayOffset += 1) {
+    const utcDate = new Date(Date.UTC(year, month - 1, day + dayOffset, 12, 0, 0))
+    const dateStr = utcDate.toISOString().split('T')[0]
+    const jsDay = utcDate.getUTCDay()
+    const isoDay = jsDay === 0 ? 7 : jsDay
+    const dayKey = WEEKDAY_KEYS[isoDay - 1]
+    const workingDay = config.workingHours.find((d) => d.day === dayKey)
+    if (!workingDay?.enabled) continue
+    dates.push({
+      id: dateStr,
+      title: formatDateLabel(dateStr, timeZone),
+    })
+  }
+
+  return dates
 }
 
 /**
@@ -397,9 +428,11 @@ export async function handleFlowAction(
 async function handleInit(): Promise<Record<string, unknown>> {
   try {
     const calendarPicker = await getCalendarPickerData()
+    const dates = await getAvailableDates()
 
     return createSuccessResponse('BOOKING_START', {
       services: DEFAULT_SERVICES.map((s) => ({ id: s.id, title: s.title })),
+      dates,
       min_date: calendarPicker.minDate,
       max_date: calendarPicker.maxDate,
       include_days: calendarPicker.includeDays,
@@ -438,10 +471,12 @@ async function handleDataExchange(
 
         if (slots.length === 0) {
           const calendarPicker = await getCalendarPickerData()
+          const dates = await getAvailableDates()
           const config = await getCalendarBookingConfig()
           const formattedChip = formatDateChip(selectedDate, config.timezone)
           return createSuccessResponse('BOOKING_START', {
             ...data,
+            dates,
             min_date: calendarPicker.minDate,
             max_date: calendarPicker.maxDate,
             include_days: calendarPicker.includeDays,

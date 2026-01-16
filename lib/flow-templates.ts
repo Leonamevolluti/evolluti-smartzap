@@ -1,3 +1,6 @@
+import type { BookingFlowConfigV1 } from '@/lib/dynamic-flow'
+import { generateBookingDynamicFlowJson, getDefaultBookingFlowConfig } from '@/lib/dynamic-flow'
+
 export type FlowMappingV1 = {
   version: 1
   contact?: {
@@ -40,6 +43,8 @@ export type FlowTemplate = {
   form?: FlowFormSpecV1
   /** Indica se é um template dinâmico (usa data_exchange). */
   isDynamic?: boolean
+  /** Config específico para templates dinâmicos. */
+  dynamicConfig?: BookingFlowConfigV1
 }
 
 // Observação importante:
@@ -494,6 +499,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     name: 'Agendamento (Google Calendar)',
     description: 'Agendamento em tempo real com slots do Google Calendar. Requer endpoint configurado.',
     isDynamic: true,
+    dynamicConfig: getDefaultBookingFlowConfig(),
     // Form simplificado para o builder - coleta dados básicos do cliente
     // O Flow JSON completo com data_exchange é usado ao publicar
     form: {
@@ -508,104 +514,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
         { id: 'notes', name: 'notes', label: 'Observações', type: 'long_text', required: false },
       ],
     },
-    flowJson: {
-      version: '6.0',
-      data_api_version: '3.0',
-      routing_model: {
-        BOOKING_START: ['SELECT_TIME'],
-        SELECT_TIME: ['CUSTOMER_INFO', 'BOOKING_START'],
-        CUSTOMER_INFO: ['SUCCESS', 'SELECT_TIME'],
-        SUCCESS: [],
-      },
-      screens: [
-        {
-          id: 'BOOKING_START',
-          title: '${data.title}',
-          data: {
-            title: { type: 'string', __example__: 'Agendar Atendimento' },
-            subtitle: { type: 'string', __example__: 'Escolha o servico e a data' },
-            services: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' } } }, __example__: [{ id: 'consulta', title: 'Consulta' }] },
-            dates: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' } } }, __example__: [{ id: '2024-01-15', title: 'Seg, 15 de Jan' }] },
-            error_message: { type: 'string', __example__: '' },
-          },
-          layout: {
-            type: 'SingleColumnLayout',
-            children: [
-              { type: 'Form', name: 'booking_form', children: [
-                { type: 'TextSubheading', text: '${data.subtitle}' },
-                { type: 'Dropdown', name: 'selected_service', label: 'Tipo de Atendimento', required: true, 'data-source': '${data.services}' },
-                { type: 'Dropdown', name: 'selected_date', label: 'Data', required: true, 'data-source': '${data.dates}' },
-                { type: 'TextCaption', text: '${data.error_message}', visible: '${data.error_message}' },
-                { type: 'Footer', label: 'Ver Horarios', 'on-click-action': { name: 'data_exchange', payload: { selected_service: '${form.selected_service}', selected_date: '${form.selected_date}' } } },
-              ] },
-            ],
-          },
-        },
-        {
-          id: 'SELECT_TIME',
-          title: '${data.title}',
-          refresh_on_back: true,
-          data: {
-            title: { type: 'string', __example__: 'Escolha o Horario' },
-            subtitle: { type: 'string', __example__: 'Horarios disponiveis' },
-            selected_service: { type: 'string', __example__: 'consulta' },
-            selected_date: { type: 'string', __example__: '2024-01-15' },
-            slots: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' } } }, __example__: [{ id: '2024-01-15T09:00:00Z', title: '09:00' }] },
-          },
-          layout: {
-            type: 'SingleColumnLayout',
-            children: [
-              { type: 'Form', name: 'time_form', children: [
-                { type: 'TextSubheading', text: '${data.subtitle}' },
-                { type: 'Dropdown', name: 'selected_slot', label: 'Horario', required: true, 'data-source': '${data.slots}' },
-                { type: 'Footer', label: 'Continuar', 'on-click-action': { name: 'data_exchange', payload: { selected_service: '${data.selected_service}', selected_date: '${data.selected_date}', selected_slot: '${form.selected_slot}' } } },
-              ] },
-            ],
-          },
-        },
-        {
-          id: 'CUSTOMER_INFO',
-          title: '${data.title}',
-          data: {
-            title: { type: 'string', __example__: 'Seus Dados' },
-            subtitle: { type: 'string', __example__: 'Preencha seus dados' },
-            selected_service: { type: 'string', __example__: 'consulta' },
-            selected_date: { type: 'string', __example__: '2024-01-15' },
-            selected_slot: { type: 'string', __example__: '2024-01-15T09:00:00Z' },
-          },
-          layout: {
-            type: 'SingleColumnLayout',
-            children: [
-              { type: 'Form', name: 'customer_form', children: [
-                { type: 'TextSubheading', text: '${data.subtitle}' },
-                { type: 'TextInput', name: 'customer_name', label: 'Seu Nome', required: true, 'input-type': 'text' },
-                { type: 'TextInput', name: 'customer_phone', label: 'Telefone (opcional)', required: false, 'input-type': 'phone' },
-                { type: 'TextArea', name: 'notes', label: 'Observacoes (opcional)', required: false },
-                { type: 'Footer', label: 'Confirmar Agendamento', 'on-click-action': { name: 'data_exchange', payload: { selected_service: '${data.selected_service}', selected_date: '${data.selected_date}', selected_slot: '${data.selected_slot}', customer_name: '${form.customer_name}', customer_phone: '${form.customer_phone}', notes: '${form.notes}' } } },
-              ] },
-            ],
-          },
-        },
-        {
-          id: 'SUCCESS',
-          title: 'Confirmado!',
-          terminal: true,
-          success: true,
-          data: {
-            message: { type: 'string', __example__: 'Agendamento confirmado!' },
-            event_id: { type: 'string', __example__: 'abc123' },
-          },
-          layout: {
-            type: 'SingleColumnLayout',
-            children: [
-              { type: 'TextHeading', text: 'Agendamento Confirmado' },
-              { type: 'TextBody', text: '${data.message}' },
-              { type: 'Footer', label: 'Fechar', 'on-click-action': { name: 'complete', payload: { event_id: '${data.event_id}', status: 'confirmed' } } },
-            ],
-          },
-        },
-      ],
-    },
+    flowJson: generateBookingDynamicFlowJson(),
     defaultMapping: {
       version: 1,
       contact: {

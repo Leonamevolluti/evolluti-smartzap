@@ -2,13 +2,24 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { nanoid } from 'nanoid'
+import { MoreVertical, Plus, Trash2 } from 'lucide-react'
 
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 import {
   FlowFormFieldType,
   FlowFormSpecV1,
+  FlowFormStepV1,
   generateFlowJsonFromFormSpec,
   normalizeFlowFieldName,
   normalizeFlowFormSpec,
@@ -48,6 +59,7 @@ export function FlowFormBuilder(props: FlowFormBuilderProps) {
   const [templateOpen, setTemplateOpen] = useState(false)
   const [showIntro, setShowIntro] = useState(false)
   const [lastAddedId, setLastAddedId] = useState<string | null>(null)
+  const [activeStepId, setActiveStepId] = useState<string>('STEP_1')
 
   const showHeaderActions = props.showHeaderActions !== false
   const showTechFields = props.showTechFields !== false
@@ -71,6 +83,7 @@ export function FlowFormBuilder(props: FlowFormBuilderProps) {
   useEffect(() => {
     if (dirty) return
     setForm(initialForm)
+    setActiveStepId(initialForm.steps?.[0]?.id || 'STEP_1')
   }, [dirty, initialForm])
 
   // Sync form title with flowName
@@ -100,8 +113,37 @@ export function FlowFormBuilder(props: FlowFormBuilderProps) {
   }, [form.intro])
 
   // Computed values
+  const steps: FlowFormStepV1[] = useMemo(() => {
+    if (Array.isArray(form.steps) && form.steps.length > 0) return form.steps
+    return [{ id: 'STEP_1', fields: form.fields }]
+  }, [form.fields, form.steps])
+
+  const activeStepIndex = useMemo(() => {
+    const idx = steps.findIndex((s) => s.id === activeStepId)
+    return idx >= 0 ? idx : 0
+  }, [activeStepId, steps])
+
+  const activeStep = steps[activeStepIndex] || steps[0] || { id: 'STEP_1', fields: [] }
+  const activeFields = activeStep.fields || []
+  const isLastStep = activeStepIndex === steps.length - 1
+
+  // Ensure active step exists
+  useEffect(() => {
+    if (!steps.length) return
+    if (steps.some((s) => s.id === activeStepId)) return
+    setActiveStepId(steps[0]?.id || 'STEP_1')
+  }, [activeStepId, steps])
+
   const issues = useMemo(() => validateFlowFormSpec(form), [form])
   const generatedJson = useMemo(() => generateFlowJsonFromFormSpec(form), [form])
+
+  useEffect(() => {
+    const screens = Array.isArray((generatedJson as any)?.screens) ? ((generatedJson as any).screens as any[]) : []
+    const targetScreenId = screens[activeStepIndex]?.id || null
+    if (props.onPreviewScreenIdChange) {
+      props.onPreviewScreenIdChange(targetScreenId)
+    }
+  }, [activeStepId, activeStepIndex, generatedJson, steps.length])
 
   // Notify parent of preview changes
   useEffect(() => {
@@ -124,51 +166,106 @@ export function FlowFormBuilder(props: FlowFormBuilderProps) {
     setDirty(true)
   }
 
-  const updateField = (idx: number, patch: any) => {
+  const setActiveStepFields = (nextFields: any[]) => {
     setForm((prev) => {
-      const fields = [...prev.fields]
-      fields[idx] = { ...fields[idx], ...patch }
-      return { ...prev, fields }
+      if (Array.isArray(prev.steps) && prev.steps.length > 0) {
+        const nextSteps = prev.steps.map((s) => (s.id === activeStepId ? { ...s, fields: nextFields } : s))
+        const flattened = nextSteps.flatMap((s) => s.fields)
+        return { ...prev, steps: nextSteps, fields: flattened }
+      }
+      return { ...prev, fields: nextFields }
     })
     setDirty(true)
+  }
+
+  const updateActiveStep = (patch: Partial<FlowFormStepV1>) => {
+    setForm((prev) => {
+      const currentSteps =
+        Array.isArray(prev.steps) && prev.steps.length > 0 ? prev.steps : [{ id: 'STEP_1', fields: prev.fields }]
+      const nextSteps = currentSteps.map((s) => (s.id === activeStepId ? { ...s, ...patch } : s))
+      const flattened = nextSteps.flatMap((s) => s.fields)
+      const first = nextSteps[0] as any
+      const hasStepMeta =
+        !!String(first?.title || '').trim() ||
+        !!String(first?.nextLabel || '').trim()
+      const shouldKeepSteps = nextSteps.length > 1 || hasStepMeta
+      return { ...prev, steps: shouldKeepSteps ? nextSteps : undefined, fields: flattened }
+    })
+    setDirty(true)
+  }
+
+  const updateField = (idx: number, patch: any) => {
+    const next = [...activeFields]
+    next[idx] = { ...next[idx], ...patch }
+    setActiveStepFields(next)
   }
 
   const addField = (type: FlowFormFieldType) => {
     const nextField = createNewField(type)
-    setForm((prev) => ({ ...prev, fields: [...prev.fields, nextField] }))
-    setDirty(true)
+    setActiveStepFields([...activeFields, nextField])
     setLastAddedId(nextField.id)
   }
 
   const moveField = (idx: number, direction: 'up' | 'down') => {
-    const newIdx = direction === 'up' ? Math.max(0, idx - 1) : Math.min(form.fields.length - 1, idx + 1)
-    setForm((prev) => ({ ...prev, fields: moveItem(prev.fields, idx, newIdx) }))
-    setDirty(true)
+    const newIdx = direction === 'up' ? Math.max(0, idx - 1) : Math.min(activeFields.length - 1, idx + 1)
+    setActiveStepFields(moveItem(activeFields, idx, newIdx))
   }
 
   const duplicateField = (idx: number) => {
+    const f = activeFields[idx]
+    const copy = {
+      ...f,
+      id: `q_${nanoid(8)}`,
+      name: normalizeFlowFieldName(`${f.name}_copy_${nanoid(3)}`) || `campo_${nanoid(4)}`,
+    }
+    const next = [...activeFields]
+    next.splice(idx + 1, 0, copy)
+    setActiveStepFields(next)
+  }
+
+  const removeField = (idx: number) => {
+    setActiveStepFields(activeFields.filter((_, i) => i !== idx))
+  }
+
+  const addStep = () => {
     setForm((prev) => {
-      const f = prev.fields[idx]
-      const copy = {
-        ...f,
-        id: `q_${nanoid(8)}`,
-        name: normalizeFlowFieldName(`${f.name}_copy_${nanoid(3)}`) || `campo_${nanoid(4)}`,
-      }
-      const fields = [...prev.fields]
-      fields.splice(idx + 1, 0, copy)
-      return { ...prev, fields }
+      const currentSteps =
+        Array.isArray(prev.steps) && prev.steps.length > 0 ? prev.steps : [{ id: 'STEP_1', fields: prev.fields }]
+      const nextId = `STEP_${currentSteps.length + 1}`
+      const nextSteps = [...currentSteps, { id: nextId, title: `Etapa ${currentSteps.length + 1}`, nextLabel: 'Continuar', fields: [] }]
+      const flattened = nextSteps.flatMap((s) => s.fields)
+      setActiveStepId(nextId)
+      return { ...prev, steps: nextSteps, fields: flattened }
     })
     setDirty(true)
   }
 
-  const removeField = (idx: number) => {
-    setForm((prev) => ({ ...prev, fields: prev.fields.filter((_, i) => i !== idx) }))
+  const removeActiveStep = () => {
+    setForm((prev) => {
+      const currentSteps =
+        Array.isArray(prev.steps) && prev.steps.length > 0 ? prev.steps : [{ id: 'STEP_1', fields: prev.fields }]
+      if (currentSteps.length <= 1) return prev
+      const nextSteps = currentSteps.filter((s) => s.id !== activeStepId)
+      const flattened = nextSteps.flatMap((s) => s.fields)
+      const nextActive = nextSteps[Math.max(0, Math.min(activeStepIndex, nextSteps.length - 1))]?.id || nextSteps[0]?.id || 'STEP_1'
+      setActiveStepId(nextActive)
+      return { ...prev, steps: nextSteps.length > 1 ? nextSteps : undefined, fields: flattened }
+    })
     setDirty(true)
   }
 
   const save = () => {
     const baseSpec = props.currentSpec && typeof props.currentSpec === 'object' ? (props.currentSpec as any) : {}
-    const nextForm = { ...form, title: (props.flowName || form.title || 'MiniApp').trim() || 'MiniApp' }
+    const normalizedTitle = (props.flowName || form.title || 'MiniApp').trim() || 'MiniApp'
+    const nextStepsRaw = Array.isArray(form.steps) && form.steps.length > 0 ? form.steps : undefined
+    const first = (nextStepsRaw?.[0] as any) || null
+    const keepSingleStepMeta =
+      !!String(first?.title || '').trim() ||
+      !!String(first?.nextLabel || '').trim()
+    const nextSteps =
+      nextStepsRaw && (nextStepsRaw.length > 1 || keepSingleStepMeta) ? nextStepsRaw : undefined
+    const flattenedFields = nextSteps ? nextSteps.flatMap((s) => s.fields) : form.fields
+    const nextForm = { ...form, title: normalizedTitle, steps: nextSteps, fields: flattenedFields }
     const nextSpec = { ...baseSpec, form: nextForm }
 
     // Se temos um flowJson dinâmico (de template dinâmico), usa ele em vez de gerar do form
@@ -213,7 +310,7 @@ export function FlowFormBuilder(props: FlowFormBuilderProps) {
       {/* Form metadata (intro, screenId, status) */}
       <FormMetadata
         form={form}
-        showIntro={showIntro}
+        showIntro={showIntro && activeStepIndex === 0}
         showTechFields={showTechFields}
         dirty={dirty}
         issues={issues}
@@ -222,10 +319,84 @@ export function FlowFormBuilder(props: FlowFormBuilderProps) {
         onSave={save}
       />
 
+      {/* Steps (multi-screen form) */}
+      <div className="rounded-2xl border border-white/10 bg-zinc-900/60 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-semibold text-white">Etapas</div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                className="border-white/10 bg-zinc-950/40 hover:bg-white/5 px-2"
+                aria-label="Ações das etapas"
+              >
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="bg-zinc-900 border-white/10 text-white min-w-56">
+              <DropdownMenuItem onClick={addStep}>
+                <Plus className="h-4 w-4" />
+                Adicionar etapa
+              </DropdownMenuItem>
+              <DropdownMenuItem variant="destructive" disabled={steps.length <= 1} onClick={removeActiveStep}>
+                <Trash2 className="h-4 w-4" />
+                Remover etapa
+              </DropdownMenuItem>
+              <DropdownMenuSeparator className="bg-white/10" />
+              <DropdownMenuItem disabled={!canSave} onClick={save}>
+                Salvar agora
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        <Tabs value={activeStepId} onValueChange={setActiveStepId}>
+          <TabsList className="bg-zinc-950/40 border border-white/10">
+            {steps.map((s, idx) => (
+              <TabsTrigger key={s.id} value={s.id} className="text-xs">
+                {(s.title || `Etapa ${idx + 1}`).slice(0, 18)}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs uppercase tracking-widest text-gray-500 mb-2">Título da etapa</label>
+            <Input
+              value={activeStep?.title || ''}
+              onChange={(e) => {
+                updateActiveStep({ title: e.target.value })
+              }}
+              placeholder={form.title || `Etapa ${activeStepIndex + 1}`}
+            />
+            <div className="text-[11px] text-gray-500 mt-1">Se vazio, usa o título do formulário.</div>
+          </div>
+          {!isLastStep ? (
+            <div>
+              <label className="block text-xs uppercase tracking-widest text-gray-500 mb-2">Botão desta etapa</label>
+              <Input
+                value={activeStep?.nextLabel || 'Continuar'}
+                onChange={(e) => updateActiveStep({ nextLabel: e.target.value })}
+                placeholder="Continuar"
+              />
+              <div className="text-[11px] text-gray-500 mt-1">Leva para a próxima etapa automaticamente.</div>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-xs uppercase tracking-widest text-gray-500 mb-2">Botão (final)</label>
+              <Input value={form.submitLabel} onChange={(e) => update({ submitLabel: e.target.value })} />
+              <div className="text-[11px] text-gray-500 mt-1">Finaliza e envia o payload para o webhook.</div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Field list with issues alert */}
       <div>
         <FieldList
-          fields={form.fields}
+          fields={activeFields}
           questionRefs={questionRefs}
           onUpdateField={updateField}
           onMoveField={moveField}
@@ -236,42 +407,33 @@ export function FlowFormBuilder(props: FlowFormBuilderProps) {
         <IssuesAlert issues={issues} />
       </div>
 
-      {/* Submit button label */}
-      <div className="space-y-2">
-        <label className="block text-xs uppercase tracking-widest text-gray-500">
-          Botão (última ação)
-        </label>
-        <Input value={form.submitLabel} onChange={(e) => update({ submitLabel: e.target.value })} />
-      </div>
+      {isLastStep ? (
+        <>
+          <div className="flex items-center justify-between rounded-xl border border-white/10 bg-zinc-950/40 px-3 py-2">
+            <div>
+              <div className="text-xs font-medium text-gray-300">Enviar confirmação ao usuário</div>
+              <div className="text-[11px] text-gray-500">Mostra o resumo das respostas após finalizar</div>
+            </div>
+            <Switch checked={form.sendConfirmation !== false} onCheckedChange={(checked) => update({ sendConfirmation: checked })} />
+          </div>
 
-      <div className="flex items-center justify-between rounded-xl border border-white/10 bg-zinc-950/40 px-3 py-2">
-        <div>
-          <div className="text-xs font-medium text-gray-300">Enviar confirmação ao usuário</div>
-          <div className="text-[11px] text-gray-500">Mostra o resumo das respostas após finalizar</div>
-        </div>
-        <Switch
-          checked={form.sendConfirmation !== false}
-          onCheckedChange={(checked) => update({ sendConfirmation: checked })}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <label className="block text-xs uppercase tracking-widest text-gray-500">
-          Texto da confirmação (opcional)
-        </label>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Input
-            value={form.confirmationTitle || ''}
-            onChange={(e) => update({ confirmationTitle: e.target.value })}
-            placeholder="Resposta registrada ✅"
-          />
-          <Input
-            value={form.confirmationFooter || ''}
-            onChange={(e) => update({ confirmationFooter: e.target.value })}
-            placeholder="Qualquer ajuste, responda esta mensagem."
-          />
-        </div>
-      </div>
+          <div className="space-y-2">
+            <label className="block text-xs uppercase tracking-widest text-gray-500">Texto da confirmação (opcional)</label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <Input
+                value={form.confirmationTitle || ''}
+                onChange={(e) => update({ confirmationTitle: e.target.value })}
+                placeholder="Resposta registrada ✅"
+              />
+              <Input
+                value={form.confirmationFooter || ''}
+                onChange={(e) => update({ confirmationFooter: e.target.value })}
+                placeholder="Qualquer ajuste, responda esta mensagem."
+              />
+            </div>
+          </div>
+        </>
+      ) : null}
 
       {/* Dialogs */}
       <AIGenerateDialog

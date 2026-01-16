@@ -3,19 +3,28 @@
 import React from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, ExternalLink, Loader2, Save, UploadCloud, Wand2, LayoutTemplate, PenSquare } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Loader2, Save, UploadCloud, Wand2, LayoutTemplate, PenSquare, Check } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Page, PageActions, PageDescription, PageHeader, PageTitle } from '@/components/ui/page'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { FlowFormBuilder } from '@/components/features/flows/builder/FlowFormBuilder'
-import { TemplateModelPreviewCard } from '@/components/ui/TemplateModelPreviewCard'
+import { UnifiedFlowEditor } from '@/components/features/flows/builder/UnifiedFlowEditor'
+import { AdvancedFlowPanel } from '@/components/features/flows/builder/dynamic-flow/AdvancedFlowPanel'
 import { MetaFlowPreview } from '@/components/ui/MetaFlowPreview'
 import { useFlowEditorController } from '@/hooks/useFlowEditor'
 import { Textarea } from '@/components/ui/textarea'
 import { FLOW_TEMPLATES } from '@/lib/flow-templates'
-import { flowJsonToFormSpec, generateFlowJsonFromFormSpec, validateFlowFormSpec } from '@/lib/flow-form'
+import { flowJsonToFormSpec, generateFlowJsonFromFormSpec } from '@/lib/flow-form'
+import {
+  dynamicFlowSpecFromJson,
+  bookingConfigToDynamicSpec,
+  formSpecToDynamicSpec,
+  type DynamicFlowSpecV1,
+  generateDynamicFlowJson,
+  getDefaultBookingFlowConfig,
+  normalizeBookingFlowConfig,
+} from '@/lib/dynamic-flow'
 
 export default function FlowBuilderEditorPage({
   params,
@@ -31,100 +40,58 @@ export default function FlowBuilderEditorPage({
 
   const [name, setName] = React.useState('')
   const [metaFlowId, setMetaFlowId] = React.useState<string>('')
-  const [previewMode, setPreviewMode] = React.useState<'smartzap' | 'meta'>('meta')
   const [step, setStep] = React.useState<1 | 2 | 3>(1)
   const [formPreviewJson, setFormPreviewJson] = React.useState<unknown>(null)
-  const [formScreenId, setFormScreenId] = React.useState('')
-  const [formIssues, setFormIssues] = React.useState<string[]>([])
-  const [formDirty, setFormDirty] = React.useState(false)
-  const latestFormSpecRef = React.useRef<any>(null)
-  const dynamicFlowJsonRef = React.useRef<Record<string, unknown> | null>(null)
-  const formActionsRef = React.useRef<{
-    openAI: () => void
-    openTemplate: () => void
-    setScreenId: (value: string) => void
-  } | null>(null)
-  const [startMode, setStartMode] = React.useState<'ai' | 'template' | null>(null)
+  const [templateSelectedPreviewJson, setTemplateSelectedPreviewJson] = React.useState<unknown>(null)
+  const [templateHoverPreviewJson, setTemplateHoverPreviewJson] = React.useState<unknown>(null)
+  const [formPreviewSelectedScreenId, setFormPreviewSelectedScreenId] = React.useState<string | null>(null)
+  const [previewSelectedEditorKey, setPreviewSelectedEditorKey] = React.useState<string | null>(null)
+  const [previewDynamicSpec, setPreviewDynamicSpec] = React.useState<DynamicFlowSpecV1 | null>(null)
+  const [startMode, setStartMode] = React.useState<'ai' | 'template' | 'zero' | null>(null)
   const [aiPrompt, setAiPrompt] = React.useState('')
   const [aiLoading, setAiLoading] = React.useState(false)
   const [selectedTemplateKey, setSelectedTemplateKey] = React.useState<string>(FLOW_TEMPLATES[0]?.key || '')
   const [hoverTemplateKey, setHoverTemplateKey] = React.useState<string | null>(null)
   const hoverPreviewTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [formPreview, setFormPreview] = React.useState<{
-    title: string
-    intro?: string
-    submitLabel?: string
-    questions: Array<{ label: string; required: boolean }>
-  } | null>(null)
+  const [showAdvancedPanel, setShowAdvancedPanel] = React.useState(false)
 
-  const handleFormPreviewChange = React.useCallback(
-    ({ form, generatedJson, issues, dirty }: { form: any; generatedJson: unknown; issues: string[]; dirty: boolean }) => {
-      latestFormSpecRef.current = form
-      const dynamicJson = dynamicFlowJsonRef.current || null
-      setFormPreviewJson(dynamicJson ?? generatedJson)
-      setFormScreenId(String(form?.screenId || ''))
-      setFormIssues(Array.isArray(issues) ? issues : [])
-      setFormDirty(!!dirty)
-      setFormPreview({
-        title: form?.title || '',
-        intro: form?.intro || '',
-        submitLabel: form?.submitLabel || '',
-        questions: Array.isArray(form?.fields)
-          ? form.fields.map((f: any) => ({
-              label: String(f?.label || 'Pergunta'),
-              required: !!f?.required,
-            }))
-          : [],
-      })
-    },
-    [],
-  )
+  const advancedGate = React.useMemo(() => {
+    const hasJson = !!formPreviewJson && typeof formPreviewJson === 'object'
+    const hasRouting = hasJson ? !!(formPreviewJson as any)?.routing_model : false
+    return { hasJson, hasRouting, canRender: !!showAdvancedPanel && hasJson && hasRouting }
+  }, [formPreviewJson, showAdvancedPanel])
 
-  const previewBody = React.useMemo(() => {
-    const title = (formPreview?.title || name || 'Formulário').trim()
-    const intro = (formPreview?.intro || '').trim()
-    const questions = formPreview?.questions || []
+  React.useEffect(() => {
+    if (!showAdvancedPanel) return
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'advanced-panel',hypothesisId:'H11',location:'app/(dashboard)/flows/builder/[id]/page.tsx:effect',message:'showAdvancedPanel turned on',data:{step,startMode,hasJson:advancedGate.hasJson,hasRouting:advancedGate.hasRouting},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion agent log
+  }, [advancedGate.hasJson, advancedGate.hasRouting, showAdvancedPanel, startMode, step])
 
-    if (!questions.length && !intro) return ''
-
-    const lines: string[] = []
-    if (title) lines.push(title)
-    if (intro) lines.push(intro)
-    if (questions.length) {
-      lines.push('')
-      lines.push('Perguntas:')
-      for (const [idx, q] of questions.slice(0, 8).entries()) {
-        lines.push(`${idx + 1}. ${q.label}${q.required ? ' *' : ''}`)
-      }
-      if (questions.length > 8) lines.push(`…e mais ${questions.length - 8} perguntas`)
+  React.useEffect(() => {
+    if (!showAdvancedPanel) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'advanced-panel',hypothesisId:'H15',location:'app/(dashboard)/flows/builder/[id]/page.tsx:keydown',message:'escape closes advanced panel',data:{},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion agent log
+      setShowAdvancedPanel(false)
     }
-    return lines.join('\n')
-  }, [formPreview, name])
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showAdvancedPanel])
 
-  const previewButtonLabel = (formPreview?.submitLabel || '').trim() || 'Abrir formulário'
-  const hasPreviewQuestions = (formPreview?.questions?.length || 0) > 0
-  const hasIntro = Boolean((formPreview?.intro || '').trim())
+  React.useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'advanced-panel',hypothesisId:'H14',location:'app/(dashboard)/flows/builder/[id]/page.tsx:effect',message:'showAdvancedPanel state',data:{showAdvancedPanel},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion agent log
+  }, [showAdvancedPanel])
 
-  const applyFormSpec = React.useCallback((form: any) => {
-    latestFormSpecRef.current = form
-    const issues = validateFlowFormSpec(form)
-    const flowJson = generateFlowJsonFromFormSpec(form)
-    setFormPreviewJson(flowJson)
-    setFormScreenId(String(form?.screenId || ''))
-    setFormIssues(issues)
-    setFormDirty(true)
-    setFormPreview({
-      title: form?.title || '',
-      intro: form?.intro || '',
-      submitLabel: form?.submitLabel || '',
-      questions: Array.isArray(form?.fields)
-        ? form.fields.map((f: any) => ({
-            label: String(f?.label || 'Pergunta'),
-            required: !!f?.required,
-          }))
-        : [],
-    })
-  }, [])
+  React.useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'start-mode',hypothesisId:'H10',location:'app/(dashboard)/flows/builder/[id]/page.tsx:effect',message:'startMode changed',data:{step,startMode},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion agent log
+  }, [startMode, step])
 
   const handleGenerateWithAI = React.useCallback(async () => {
     if (aiLoading) return
@@ -152,19 +119,21 @@ export default function FlowBuilderEditorPage({
       const generatedForm = data?.form
       if (!generatedForm) throw new Error('Resposta inválida da IA (form ausente)')
 
-      applyFormSpec(generatedForm)
+      const dynamicSpec = formSpecToDynamicSpec(generatedForm, name || 'MiniApp')
+      const dynamicJson = generateDynamicFlowJson(dynamicSpec)
+      setFormPreviewJson(dynamicJson)
       controller.save({
-        spec: { ...(controller.spec as any), form: generatedForm },
-        flowJson: generateFlowJsonFromFormSpec(generatedForm),
+        spec: { ...(controller.spec as any), form: generatedForm, dynamicFlow: dynamicSpec },
+        flowJson: dynamicJson,
       })
       setStep(2)
-      toast.success('MiniApp gerada! Revise e ajuste as perguntas.')
+      toast.success('MiniApp gerada! Ajuste as telas e publique.')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Falha ao gerar miniapp com IA')
     } finally {
       setAiLoading(false)
     }
-  }, [aiLoading, aiPrompt, applyFormSpec, controller, name])
+  }, [aiLoading, aiPrompt, controller, name])
 
   const handleApplyTemplate = React.useCallback(() => {
     const tpl = FLOW_TEMPLATES.find((t) => t.key === selectedTemplateKey)
@@ -173,68 +142,166 @@ export default function FlowBuilderEditorPage({
     const form = tpl.form
       ? { ...tpl.form, title: name || tpl.form.title }
       : flowJsonToFormSpec(tpl.flowJson, name || 'MiniApp')
-    applyFormSpec(form)
-    controller.save({
-      spec: { ...(controller.spec as any), form },
-      // Para templates dinâmicos, usa o flowJson original
-      flowJson: tpl.isDynamic ? tpl.flowJson : generateFlowJsonFromFormSpec(form),
-    })
-    if (tpl.isDynamic) {
-      dynamicFlowJsonRef.current = tpl.flowJson
+    if (tpl.key === 'agendamento_dinamico_v1') {
+      const normalized = normalizeBookingFlowConfig(tpl.dynamicConfig || getDefaultBookingFlowConfig())
+      const dynamicSpec = bookingConfigToDynamicSpec(normalized)
+      const dynamicJson = generateDynamicFlowJson(dynamicSpec)
+      setFormPreviewJson(dynamicJson)
+      controller.save({
+        spec: { ...(controller.spec as any), form, booking: normalized, dynamicFlow: dynamicSpec },
+        flowJson: dynamicJson,
+        templateKey: tpl.key,
+      })
+      setStep(2)
+      toast.success('Template aplicado! Ajuste as telas e publique.')
+      return
     }
+    const dynamicSpec = tpl.isDynamic ? dynamicFlowSpecFromJson(tpl.flowJson as any) : formSpecToDynamicSpec(form, name || 'MiniApp')
+    const dynamicJson = tpl.isDynamic ? tpl.flowJson : generateDynamicFlowJson(dynamicSpec)
+    setFormPreviewJson(dynamicJson)
+    controller.save({
+      spec: { ...(controller.spec as any), form, dynamicFlow: dynamicSpec },
+      flowJson: dynamicJson,
+      templateKey: tpl.key,
+    })
     setStep(2)
     toast.success(tpl.isDynamic
       ? 'Template dinâmico aplicado! O agendamento em tempo real será configurado ao publicar.'
-      : 'Modelo aplicado! Ajuste as perguntas.')
-  }, [applyFormSpec, controller, name, selectedTemplateKey])
+      : 'Modelo aplicado! Ajuste as telas.')
+  }, [controller, name, selectedTemplateKey])
+
+  const computeTemplatePreviewJson = React.useCallback((tpl: any): unknown => {
+    // Preview deve refletir o que será aplicado (sem salvar).
+    const form = tpl.form
+      ? { ...tpl.form, title: name || tpl.form.title }
+      : flowJsonToFormSpec(tpl.flowJson, name || 'MiniApp')
+    if (tpl.key === 'agendamento_dinamico_v1') {
+      const normalized = normalizeBookingFlowConfig(tpl.dynamicConfig || getDefaultBookingFlowConfig())
+      const dynamicSpec = bookingConfigToDynamicSpec(normalized)
+      return generateDynamicFlowJson(dynamicSpec)
+    }
+    const dynamicSpec = tpl.isDynamic ? dynamicFlowSpecFromJson(tpl.flowJson as any) : formSpecToDynamicSpec(form, name || 'MiniApp')
+    return tpl.isDynamic ? tpl.flowJson : generateDynamicFlowJson(dynamicSpec)
+  }, [name])
 
   const handleTemplateHover = React.useCallback((tpl: { flowJson: unknown; key?: string; form?: any; isDynamic?: boolean }) => {
     if (tpl.key) {
       setHoverTemplateKey(tpl.key)
     }
+    // Aplica preview imediatamente para evitar “flash” do selecionado antes do hover.
+    try {
+      const immediateJson = computeTemplatePreviewJson(tpl)
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'template-preview',hypothesisId:'H7',location:'app/(dashboard)/flows/builder/[id]/page.tsx:handleTemplateHover',message:'hover immediate preview applied',data:{tplKey:tpl.key ?? null,screenCount:Array.isArray((immediateJson as any)?.screens)?(immediateJson as any).screens.length:null,firstScreenId:Array.isArray((immediateJson as any)?.screens)?String((immediateJson as any).screens?.[0]?.id||''):null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion agent log
+      setTemplateHoverPreviewJson(immediateJson)
+    } catch {
+      // ignore
+    }
     if (hoverPreviewTimerRef.current) {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'template-preview',hypothesisId:'H3',location:'app/(dashboard)/flows/builder/[id]/page.tsx:handleTemplateHover',message:'hover cancels previous timer',data:{step,startMode,newTplKey:tpl.key ?? null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion agent log
       clearTimeout(hoverPreviewTimerRef.current)
     }
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'template-preview',hypothesisId:'H3',location:'app/(dashboard)/flows/builder/[id]/page.tsx:handleTemplateHover',message:'hover schedules timer',data:{step,startMode,tplKey:tpl.key ?? null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion agent log
     hoverPreviewTimerRef.current = setTimeout(() => {
       try {
-        // Usa tpl.form se disponível (para templates dinâmicos)
-        const form = tpl.form
-          ? { ...tpl.form, title: name || tpl.form.title }
-          : flowJsonToFormSpec(tpl.flowJson, name || 'MiniApp')
-        setFormPreview({
-          title: form?.title || '',
-          intro: form?.intro || '',
-          submitLabel: form?.submitLabel || '',
-          questions: Array.isArray(form?.fields)
-            ? form.fields.map((f: any) => ({
-                label: String(f?.label || 'Pergunta'),
-                required: !!f?.required,
-              }))
-            : [],
-        })
-        setFormPreviewJson(tpl.flowJson)
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'template-preview',hypothesisId:'H1',location:'app/(dashboard)/flows/builder/[id]/page.tsx:handleTemplateHover',message:'hover fired',data:{step, startMode, tplKey:tpl.key ?? null,selectedTemplateKey,hasTplForm:Boolean(tpl.form),isDynamic:Boolean(tpl.isDynamic)},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion agent log
+        const nextJson = computeTemplatePreviewJson(tpl)
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'template-preview',hypothesisId:'H1',location:'app/(dashboard)/flows/builder/[id]/page.tsx:handleTemplateHover',message:'hover computed preview json',data:{tplKey:tpl.key ?? null,screenCount:Array.isArray((nextJson as any)?.screens)?(nextJson as any).screens.length:null,firstScreenId:Array.isArray((nextJson as any)?.screens)?String((nextJson as any).screens?.[0]?.id||''):null},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion agent log
+        setTemplateHoverPreviewJson(nextJson)
       } catch {
         // ignore hover preview errors
       }
     }, 150)
-  }, [name])
+  }, [computeTemplatePreviewJson, name])
+
+  React.useEffect(() => {
+    const current = step === 1 && startMode === 'template'
+      ? (templateHoverPreviewJson || templateSelectedPreviewJson)
+      : formPreviewJson
+    if (!current || typeof current !== 'object') return
+    const screens = Array.isArray((current as any).screens) ? (current as any).screens : []
+    const firstScreenId = screens.length ? String(screens[0]?.id || '') : null
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'template-preview',hypothesisId:'H2',location:'app/(dashboard)/flows/builder/[id]/page.tsx:effect',message:'formPreviewJson updated',data:{step,startMode,selectedTemplateKey,firstScreenId,screenCount:screens.length,selectedScreenId:formPreviewSelectedScreenId ?? null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion agent log
+  }, [formPreviewJson, startMode, step, templateHoverPreviewJson, templateSelectedPreviewJson])
+
+  React.useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'template-preview',hypothesisId:'H2',location:'app/(dashboard)/flows/builder/[id]/page.tsx:effect',message:'selectedTemplateKey changed',data:{step,startMode,selectedTemplateKey,hasPreviewJson:Boolean(formPreviewJson),selectedScreenId:formPreviewSelectedScreenId ?? null,previewFlowJsonSource:formPreviewJson ? 'state' : ((flow as any)?.flow_json ? 'db' : 'none')},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion agent log
+  }, [selectedTemplateKey])
 
   React.useEffect(() => {
     if (!flow) return
     // Só sincroniza quando o registro muda (ou quando ainda não há valor no state)
     setName((prev) => prev || flow.name || '')
     setMetaFlowId((prev) => prev || flow.meta_flow_id || '')
+    if (flow.template_key) {
+      setSelectedTemplateKey(flow.template_key)
+    }
+    // Se vier de um fluxo já salvo, mostra no preview imediatamente.
+    const savedJson = (flow as any)?.flow_json
+    if (savedJson && typeof savedJson === 'object') {
+      setFormPreviewJson((prev) => prev || savedJson)
+    }
   }, [flow?.id])
 
+  // No passo 1, só mostramos prévia quando o usuário está escolhendo um modelo pronto.
+  // Em "Criar com IA" (e antes de escolher), não existe conteúdo para pré-visualizar ainda.
+  const previewFlowJson =
+    step === 1
+      ? (startMode === 'template' ? (templateHoverPreviewJson || templateSelectedPreviewJson || null) : null)
+      : formPreviewJson || (flow as any)?.flow_json
+
   React.useEffect(() => {
-    const flowJson = (flow as any)?.flow_json
-    if (!flowJson || typeof flowJson !== 'object') return
-    const dataApiVersion = (flowJson as any).data_api_version
-    if (dataApiVersion === '3.0') {
-      dynamicFlowJsonRef.current = flowJson as Record<string, unknown>
-      setFormPreviewJson(flowJson)
-    }
-  }, [flow])
+    const source =
+      step === 1
+        ? startMode === 'template'
+          ? templateHoverPreviewJson
+            ? 'template-hover'
+            : templateSelectedPreviewJson
+              ? 'template-selected'
+              : 'none'
+          : 'none'
+        : formPreviewJson
+          ? 'editor-state'
+          : (flow as any)?.flow_json
+            ? 'db'
+            : 'none'
+    const json = previewFlowJson as any
+    const screens = json && typeof json === 'object' && Array.isArray(json.screens) ? json.screens : []
+    const firstScreenId = screens.length ? String(screens[0]?.id || '') : null
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'template-preview',hypothesisId:'H6',location:'app/(dashboard)/flows/builder/[id]/page.tsx:effect',message:'previewFlowJson computed',data:{step,startMode,source,firstScreenId,selectedScreenId:formPreviewSelectedScreenId ?? null,selectedTemplateKey},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion agent log
+  }, [formPreviewJson, formPreviewSelectedScreenId, previewFlowJson, selectedTemplateKey, startMode, step, templateHoverPreviewJson, templateSelectedPreviewJson])
+
+  React.useEffect(() => {
+    if (step !== 1 || startMode !== 'template') return
+    // garante que ao abrir “Usar modelo pronto” exista um preview “selecionado”
+    const tpl = FLOW_TEMPLATES.find((t) => t.key === selectedTemplateKey)
+    if (!tpl) return
+    const nextJson = computeTemplatePreviewJson(tpl)
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'template-preview',hypothesisId:'H5',location:'app/(dashboard)/flows/builder/[id]/page.tsx:effect',message:'set selected template preview json',data:{selectedTemplateKey},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion agent log
+    setTemplateSelectedPreviewJson(nextJson)
+  }, [computeTemplatePreviewJson, selectedTemplateKey, startMode, step])
+
+  React.useEffect(() => {
+    // quando mudar de tela, limpa seleção anterior
+    setPreviewSelectedEditorKey(null)
+  }, [formPreviewSelectedScreenId])
 
   const shouldShowLoading = controller.isLoading
   const panelClass = 'rounded-2xl border border-white/10 bg-zinc-900/60 shadow-[0_12px_30px_rgba(0,0,0,0.35)]'
@@ -277,7 +344,7 @@ export default function FlowBuilderEditorPage({
               ) : null}
             </div>
             <PageDescription>
-              MiniApp é um formulário. Crie perguntas no modo Formulário e envie para a Meta quando estiver pronto.
+              MiniApp é uma experiência por telas. Edite conteúdo e navegação sem precisar alternar modos.
             </PageDescription>
           </div>
         </div>
@@ -351,9 +418,25 @@ export default function FlowBuilderEditorPage({
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <button
                       type="button"
-                      onClick={() => setStartMode('ai')}
-                      className="rounded-2xl border border-white/10 bg-zinc-900/60 p-4 text-left hover:bg-white/5 transition"
+                      aria-pressed={startMode === 'ai'}
+                      onClick={() => {
+                        // #region agent log
+                        fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'start-mode',hypothesisId:'H9',location:'app/(dashboard)/flows/builder/[id]/page.tsx:startMode',message:'start mode selected',data:{mode:'ai',prev:startMode},timestamp:Date.now()})}).catch(()=>{});
+                        // #endregion agent log
+                        setStartMode('ai')
+                      }}
+                      className={`relative rounded-2xl border p-4 text-left transition ${
+                        startMode === 'ai'
+                          ? 'border-emerald-400/40 bg-emerald-500/10'
+                          : 'border-white/10 bg-zinc-900/60 hover:bg-white/5'
+                      }`}
                     >
+                      {startMode === 'ai' ? (
+                        <div className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-200">
+                          <Check className="h-3 w-3" />
+                          Selecionado
+                        </div>
+                      ) : null}
                       <div className="flex items-center gap-2 text-white font-semibold">
                         <Wand2 className="h-4 w-4" />
                         Criar com IA
@@ -363,9 +446,25 @@ export default function FlowBuilderEditorPage({
 
                     <button
                       type="button"
-                      onClick={() => setStartMode('template')}
-                      className="rounded-2xl border border-white/10 bg-zinc-900/60 p-4 text-left hover:bg-white/5 transition"
+                      aria-pressed={startMode === 'template'}
+                      onClick={() => {
+                        // #region agent log
+                        fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'start-mode',hypothesisId:'H9',location:'app/(dashboard)/flows/builder/[id]/page.tsx:startMode',message:'start mode selected',data:{mode:'template',prev:startMode},timestamp:Date.now()})}).catch(()=>{});
+                        // #endregion agent log
+                        setStartMode('template')
+                      }}
+                      className={`relative rounded-2xl border p-4 text-left transition ${
+                        startMode === 'template'
+                          ? 'border-emerald-400/40 bg-emerald-500/10'
+                          : 'border-white/10 bg-zinc-900/60 hover:bg-white/5'
+                      }`}
                     >
+                      {startMode === 'template' ? (
+                        <div className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-200">
+                          <Check className="h-3 w-3" />
+                          Selecionado
+                        </div>
+                      ) : null}
                       <div className="flex items-center gap-2 text-white font-semibold">
                         <LayoutTemplate className="h-4 w-4" />
                         Usar modelo pronto
@@ -375,9 +474,26 @@ export default function FlowBuilderEditorPage({
 
                     <button
                       type="button"
-                      onClick={() => setStep(2)}
-                      className="rounded-2xl border border-white/10 bg-zinc-900/60 p-4 text-left hover:bg-white/5 transition"
+                      aria-pressed={startMode === 'zero'}
+                      onClick={() => {
+                        // #region agent log
+                        fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'start-mode',hypothesisId:'H9',location:'app/(dashboard)/flows/builder/[id]/page.tsx:startMode',message:'start mode selected',data:{mode:'zero',prev:startMode},timestamp:Date.now()})}).catch(()=>{});
+                        // #endregion agent log
+                        setStartMode('zero')
+                        setStep(2)
+                      }}
+                      className={`relative rounded-2xl border p-4 text-left transition ${
+                        startMode === 'zero'
+                          ? 'border-emerald-400/40 bg-emerald-500/10'
+                          : 'border-white/10 bg-zinc-900/60 hover:bg-white/5'
+                      }`}
                     >
+                      {startMode === 'zero' ? (
+                        <div className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-200">
+                          <Check className="h-3 w-3" />
+                          Selecionado
+                        </div>
+                      ) : null}
                       <div className="flex items-center gap-2 text-white font-semibold">
                         <PenSquare className="h-4 w-4" />
                         Criar do zero
@@ -416,19 +532,50 @@ export default function FlowBuilderEditorPage({
                   {startMode === 'template' ? (
                     <div className="rounded-2xl border border-white/10 bg-zinc-900/60 p-4 space-y-3">
                       <div className="text-sm font-semibold text-white">Usar modelo pronto</div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div
+                        className="grid grid-cols-1 md:grid-cols-2 gap-3"
+                        onMouseLeave={() => {
+                          if (hoverPreviewTimerRef.current) {
+                            clearTimeout(hoverPreviewTimerRef.current)
+                            hoverPreviewTimerRef.current = null
+                          }
+                          // #region agent log
+                          fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'template-preview',hypothesisId:'H8',location:'app/(dashboard)/flows/builder/[id]/page.tsx:templateGrid',message:'grid mouse leave clears hover preview',data:{selectedTemplateKey},timestamp:Date.now()})}).catch(()=>{});
+                          // #endregion agent log
+                          setTemplateHoverPreviewJson(null)
+                          setHoverTemplateKey(null)
+                        }}
+                      >
                         {FLOW_TEMPLATES.map((tpl) => (
                           <button
                             key={tpl.key}
                             type="button"
                             onMouseEnter={() => handleTemplateHover(tpl)}
-                            onMouseLeave={() => {
+                            onClick={() => {
+                              // #region agent log
+                              fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'template-preview',hypothesisId:'H1',location:'app/(dashboard)/flows/builder/[id]/page.tsx:templateCard',message:'template card clicked',data:{step,startMode,clickedKey:tpl.key,previousSelectedTemplateKey:selectedTemplateKey,hoverKey:hoverTemplateKey ?? null},timestamp:Date.now()})}).catch(()=>{});
+                              // #endregion agent log
                               if (hoverPreviewTimerRef.current) {
+                                // #region agent log
+                                fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'template-preview',hypothesisId:'H3',location:'app/(dashboard)/flows/builder/[id]/page.tsx:templateCard',message:'click cancels hover timer',data:{clickedKey:tpl.key},timestamp:Date.now()})}).catch(()=>{});
+                                // #endregion agent log
                                 clearTimeout(hoverPreviewTimerRef.current)
                                 hoverPreviewTimerRef.current = null
                               }
+                              setSelectedTemplateKey(tpl.key)
+                              try {
+                                const nextJson = computeTemplatePreviewJson(tpl)
+                                // #region agent log
+                                fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'template-preview',hypothesisId:'H1',location:'app/(dashboard)/flows/builder/[id]/page.tsx:templateCard',message:'template click computed preview json',data:{clickedKey:tpl.key,screenCount:Array.isArray((nextJson as any)?.screens)?(nextJson as any).screens.length:null,firstScreenId:Array.isArray((nextJson as any)?.screens)?String((nextJson as any).screens?.[0]?.id||''):null},timestamp:Date.now()})}).catch(()=>{});
+                                // #endregion agent log
+                                setFormPreviewSelectedScreenId(null)
+                                setTemplateHoverPreviewJson(null)
+                                setHoverTemplateKey(null)
+                                setTemplateSelectedPreviewJson(nextJson)
+                              } catch {
+                                // ignore click preview errors
+                              }
                             }}
-                            onClick={() => setSelectedTemplateKey(tpl.key)}
                             className={`rounded-xl border p-4 text-left transition ${
                               selectedTemplateKey === tpl.key
                                 ? 'border-emerald-400/40 bg-emerald-500/10 text-white'
@@ -460,27 +607,40 @@ export default function FlowBuilderEditorPage({
               )}
 
               <div className={`${panelClass} p-6 space-y-4 ${step === 2 ? '' : 'hidden'}`}>
-                <FlowFormBuilder
-                  flowName={name}
-                  currentSpec={controller.spec}
-                  isSaving={controller.isSaving}
-                  showHeaderActions={false}
-                  showTechFields={false}
-                  registerActions={(actions) => {
-                    formActionsRef.current = actions
-                  }}
-                  onActionComplete={() => setStep(2)}
-                  onPreviewChange={handleFormPreviewChange as any}
-                  onSave={(patch) => {
-                    const dynamicFlowJson = dynamicFlowJsonRef.current
-                    controller.save({
-                      ...(patch.spec !== undefined ? { spec: patch.spec } : {}),
-                      ...(patch.flowJson !== undefined
-                        ? { flowJson: dynamicFlowJson ?? patch.flowJson }
-                        : {}),
-                    })
-                  }}
-                />
+                {step === 2 ? (
+                  <UnifiedFlowEditor
+                    flowName={name || flow?.name || 'MiniApp'}
+                    currentSpec={controller.spec}
+                    flowJsonFromDb={(flow as any)?.flow_json}
+                    isSaving={controller.isSaving}
+                    selectedEditorKey={previewSelectedEditorKey}
+                    onOpenAdvanced={() => {
+                      // #region agent log
+                      fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'advanced-panel',hypothesisId:'H11',location:'app/(dashboard)/flows/builder/[id]/page.tsx:onOpenAdvanced',message:'open advanced clicked',data:{step,startMode,hasPreviewJson:!!formPreviewJson,hasRoutingModel:!!(formPreviewJson as any)?.routing_model},timestamp:Date.now()})}).catch(()=>{});
+                      // #endregion agent log
+                      setShowAdvancedPanel(true)
+                    }}
+                    onPreviewChange={({ spec, generatedJson, activeScreenId }) => {
+                      // #region agent log
+                      try {
+                        const screens = Array.isArray((generatedJson as any)?.screens) ? (generatedJson as any).screens : []
+                        const firstScreenId = screens.length ? String(screens[0]?.id || '') : null
+                        fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'template-preview',hypothesisId:'H4',location:'app/(dashboard)/flows/builder/[id]/page.tsx:UnifiedFlowEditor.onPreviewChange',message:'editor emitted preview',data:{step,startMode,firstScreenId,activeScreenId},timestamp:Date.now()})}).catch(()=>{});
+                      } catch {}
+                      // #endregion agent log
+                      setFormPreviewJson(generatedJson)
+                      setPreviewDynamicSpec(spec || null)
+                      setFormPreviewSelectedScreenId(activeScreenId || null)
+                    }}
+                    onPreviewScreenIdChange={(screenId) => setFormPreviewSelectedScreenId(screenId)}
+                    onSave={(patch) => {
+                      controller.save({
+                        ...(patch.spec !== undefined ? { spec: patch.spec } : {}),
+                        ...(patch.flowJson !== undefined ? { flowJson: patch.flowJson } : {}),
+                      })
+                    }}
+                  />
+                ) : null}
 
                 <div className="flex items-center justify-end">
                   <Button
@@ -505,34 +665,6 @@ export default function FlowBuilderEditorPage({
                     <Input value={name} onChange={(e) => setName(e.target.value)} />
                   </div>
 
-                  <details className="rounded-2xl border border-white/10 bg-zinc-950/40 p-4">
-                    <summary className="cursor-pointer text-sm font-semibold text-white">
-                      Ajustes avançados
-                    </summary>
-                    <div className="mt-3 space-y-3">
-                      <div>
-                        <label className="block text-xs uppercase tracking-widest text-gray-500 mb-2">Screen ID (Meta)</label>
-                        <Input
-                          value={formScreenId}
-                          onChange={(e) => {
-                            const next = e.target.value.toUpperCase()
-                            setFormScreenId(next)
-                            formActionsRef.current?.setScreenId(next)
-                          }}
-                          placeholder="Ex: CADASTRO"
-                        />
-                      </div>
-                      <div className="text-sm text-gray-400">
-                        {formDirty ? 'Alterações não salvas' : 'Sincronizado'}
-                        {formIssues.length === 0 ? (
-                          <span className="text-emerald-300"> • pronto</span>
-                        ) : (
-                          <span className="text-amber-300"> • revisar</span>
-                        )}
-                      </div>
-                    </div>
-                  </details>
-
                   <div className="flex flex-wrap items-center gap-2 pt-2">
                     <Button
                       variant="outline"
@@ -546,47 +678,12 @@ export default function FlowBuilderEditorPage({
 
                     <Button
                       onClick={async () => {
-                        const nextSpec = latestFormSpecRef.current
-                          ? { ...(controller.spec as any), form: latestFormSpecRef.current }
-                          : controller.spec
-
-                        const flowJsonToSave =
-                          dynamicFlowJsonRef.current || formPreviewJson || (flow as any)?.flow_json
-                        // #region agent log
-                        fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'endpoint-health',hypothesisId:'H1',location:'app/(dashboard)/flows/builder/[id]/page.tsx:551',message:'publish preflight start',data:{flowId:id},timestamp:Date.now()})}).catch(()=>{});
-                        // #endregion agent log
-                        try {
-                          const keysRes = await fetch('/api/flows/endpoint/keys', { cache: 'no-store' })
-                          const keysData = await keysRes.json().catch(() => ({}))
-                          const endpointUrl = typeof keysData?.endpointUrl === 'string' ? keysData.endpointUrl : null
-                          // #region agent log
-                          fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'endpoint-health',hypothesisId:'H2',location:'app/(dashboard)/flows/builder/[id]/page.tsx:558',message:'endpoint keys status',data:{flowId:id,keysOk:keysRes.ok,endpointUrl},timestamp:Date.now()})}).catch(()=>{});
-                          // #endregion agent log
-                          if (endpointUrl) {
-                            const endpointRes = await fetch(endpointUrl, { method: 'GET', cache: 'no-store' })
-                            // #region agent log
-                            fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'endpoint-health',hypothesisId:'H3',location:'app/(dashboard)/flows/builder/[id]/page.tsx:563',message:'endpoint GET check',data:{flowId:id,endpointUrl,status:endpointRes.status,ok:endpointRes.ok},timestamp:Date.now()})}).catch(()=>{});
-                            // #endregion agent log
-                          }
-
-                          const testRes = await fetch('/api/flows/endpoint/test', { cache: 'no-store' })
-                          const testData = await testRes.json().catch(() => ({}))
-                          // #region agent log
-                          fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'endpoint-health',hypothesisId:'H8',location:'app/(dashboard)/flows/builder/[id]/page.tsx:568',message:'endpoint encrypted ping test',data:{flowId:id,ok:Boolean(testData?.ok),status:testData?.status ?? null,bodyLength:testData?.bodyLength ?? null},timestamp:Date.now()})}).catch(()=>{});
-                          // #endregion agent log
-                        } catch (error) {
-                          // #region agent log
-                          fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'endpoint-health',hypothesisId:'H4',location:'app/(dashboard)/flows/builder/[id]/page.tsx:569',message:'endpoint preflight error',data:{flowId:id,errorMessage:error instanceof Error ? error.message : 'unknown'},timestamp:Date.now()})}).catch(()=>{});
-                          // #endregion agent log
-                        }
-                        // #region agent log
-                        fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'post-fix',hypothesisId:'H4',location:'app/(dashboard)/flows/builder/[id]/page.tsx:543',message:'publish flow json selection',data:{flowId:id,hasDynamicOverride:Boolean(dynamicFlowJsonRef.current),flowJsonVersion:(flowJsonToSave as any)?.version ?? null,flowJsonDataApiVersion:(flowJsonToSave as any)?.data_api_version ?? null},timestamp:Date.now()})}).catch(()=>{});
-                        // #endregion agent log
+                        const flowJsonToSave = formPreviewJson || (flow as any)?.flow_json
 
                         await controller.saveAsync({
                           name,
                           metaFlowId: metaFlowId || undefined,
-                          ...(nextSpec ? { spec: nextSpec } : {}),
+                          ...(controller.spec ? { spec: controller.spec } : {}),
                           ...(flowJsonToSave ? { flowJson: flowJsonToSave } : {}),
                         })
 
@@ -623,59 +720,71 @@ export default function FlowBuilderEditorPage({
                     <div className="text-xs uppercase tracking-widest text-gray-500">Resumo</div>
                     <div className="text-lg font-semibold text-white">Prévia</div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewMode('smartzap')}
-                    className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-                      previewMode === 'smartzap'
-                        ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-100'
-                        : 'border-white/10 bg-zinc-950/40 text-gray-300 hover:text-white'
-                    }`}
-                  >
-                    Padrão SmartZap
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewMode('meta')}
-                    className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-                      previewMode === 'meta'
-                        ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-100'
-                        : 'border-white/10 bg-zinc-950/40 text-gray-300 hover:text-white'
-                    }`}
-                  >
-                    Meta (oficial)
-                  </button>
                 </div>
 
-                {hasPreviewQuestions || hasIntro ? (
-                  previewMode === 'smartzap' ? (
-                    <TemplateModelPreviewCard
-                      title="Prévia do modelo"
-                      businessName="Business"
-                      contextLabel="flow"
-                      headerLabel={null}
-                      bodyText={previewBody}
-                      emptyBodyText="Adicione perguntas para ver a prévia."
-                      buttons={[
-                        {
-                          type: 'FLOW',
-                          text: previewButtonLabel,
-                        },
-                      ]}
+                {previewFlowJson ? (
+                  <div className="flex items-center justify-center">
+                    <MetaFlowPreview
+                      flowJson={previewFlowJson}
+                      selectedScreenId={formPreviewSelectedScreenId || undefined}
+                      selectedEditorKey={previewSelectedEditorKey}
+                      paths={
+                        step === 2 && previewDynamicSpec
+                          ? {
+                              defaultNextByScreen: previewDynamicSpec.defaultNextByScreen,
+                              branchesByScreen: previewDynamicSpec.branchesByScreen,
+                            }
+                          : undefined
+                      }
+                      onSelectEditorKey={(key) => setPreviewSelectedEditorKey(key)}
                     />
-                  ) : (
-                    <div className="flex items-center justify-center">
-                      <MetaFlowPreview flowJson={formPreviewJson || (flow as any).flow_json} />
-                    </div>
-                  )
+                  </div>
                 ) : (
                   <div className="py-16 text-center text-sm text-gray-500">
-                    Adicione uma pergunta para ver a prévia.
+                    A prévia aparece aqui assim que você criar a primeira tela.
                   </div>
                 )}
               </div>
             </div>
           </div>
+        </>
+      )}
+      {showAdvancedPanel &&
+        formPreviewJson &&
+        typeof formPreviewJson === 'object' && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/40"
+            onClick={() => {
+              // #region agent log
+              fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'advanced-panel',hypothesisId:'H15',location:'app/(dashboard)/flows/builder/[id]/page.tsx:overlay',message:'overlay click closes advanced panel',data:{},timestamp:Date.now()})}).catch(()=>{});
+              // #endregion agent log
+              setShowAdvancedPanel(false)
+            }}
+          />
+          <AdvancedFlowPanel
+            screens={(formPreviewJson as any)?.screens || []}
+            routingModel={(formPreviewJson as any)?.routing_model || {}}
+            onScreensChange={(screens) => {
+              const next = { ...(formPreviewJson as any), screens }
+              setFormPreviewJson(next)
+              const nextSpec = dynamicFlowSpecFromJson(next)
+              controller.save({
+                spec: { ...(controller.spec as any), dynamicFlow: nextSpec },
+                flowJson: next,
+              })
+            }}
+            onRoutingChange={(routing) => {
+              const next = { ...(formPreviewJson as any), routing_model: routing }
+              setFormPreviewJson(next)
+              const nextSpec = dynamicFlowSpecFromJson(next)
+              controller.save({
+                spec: { ...(controller.spec as any), dynamicFlow: nextSpec },
+                flowJson: next,
+              })
+            }}
+            onClose={() => setShowAdvancedPanel(false)}
+          />
         </>
       )}
     </Page>
