@@ -59,20 +59,25 @@ async function connectClientWithRetry(
   const maxAttempts = opts?.maxAttempts ?? 5;
   const initialDelayMs = opts?.initialDelayMs ?? 3000;
 
+  console.log(`[migrations] Iniciando conectClientWithRetry (max=${maxAttempts}, delay=${initialDelayMs}ms)`);
+
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    console.log(`[migrations] Tentativa ${attempt}/${maxAttempts} - criando client...`);
     const client = createClient();
     try {
+      console.log(`[migrations] Tentativa ${attempt}/${maxAttempts} - chamando connect()...`);
       await client.connect();
+      console.log(`[migrations] Conectado com sucesso!`);
       return client;
     } catch (err) {
       lastError = err;
-      // Log IMEDIATO do erro para debug (usando console.log pq Vercel pode filtrar error)
+      // Log IMEDIATO do erro para debug
       const errMsg = err instanceof Error ? err.message : String(err);
       const errCode = (err as any)?.code || 'N/A';
       const errName = (err as any)?.name || 'Error';
-      console.log(`[migrations] ❌ Erro de conexão (tentativa ${attempt}): name=${errName}, code=${errCode}, msg=${errMsg}`);
+      console.log(`[migrations] ERRO na tentativa ${attempt}: name=${errName}, code=${errCode}, msg=${errMsg}`);
 
       try {
         await client.end().catch(() => undefined);
@@ -84,11 +89,8 @@ async function connectClientWithRetry(
       console.log(`[migrations] isRetryable=${isRetryable}, attempt=${attempt}/${maxAttempts}`);
 
       if (!isRetryable || attempt === maxAttempts) {
-        // Log detalhado para debug
-        console.log(
-          `[migrations] 💥 Falha definitiva na conexão após ${attempt} tentativas:`,
-          { error: errMsg, code: errCode, name: errName }
-        );
+        console.log(`[migrations] FALHA DEFINITIVA - erro nao retryable ou max tentativas atingido`);
+        console.log(`[migrations] Detalhes: error=${errMsg}, code=${errCode}, name=${errName}`);
         throw err;
       }
 

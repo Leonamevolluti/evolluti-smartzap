@@ -413,11 +413,35 @@ export async function validateFileSearchStore(
     // Parse store data
     const store: FileSearchStore = await response.json()
 
+    console.log('[file-search-store] Validation response:', JSON.stringify(store, null, 2))
+
     // Check for active documents
     const activeCount = parseInt(store.activeDocumentsCount || '0', 10)
     const pendingCount = parseInt(store.pendingDocumentsCount || '0', 10)
+    const failedCount = parseInt(store.failedDocumentsCount || '0', 10)
 
-    if (activeCount === 0 && pendingCount === 0) {
+    // If there are pending documents, the store is being indexed - consider it valid
+    if (pendingCount > 0) {
+      return {
+        isValid: true,
+        status: 'valid',
+        message: `Store indexando: ${pendingCount} documento(s) pendente(s), ${activeCount} ativo(s)`,
+        store,
+      }
+    }
+
+    // If there are active documents, the store is valid
+    if (activeCount > 0) {
+      return {
+        isValid: true,
+        status: 'valid',
+        message: `Store válido com ${activeCount} documento(s) ativo(s)`,
+        store,
+      }
+    }
+
+    // No documents at all
+    if (activeCount === 0 && pendingCount === 0 && failedCount === 0) {
       return {
         isValid: false,
         status: 'no_documents',
@@ -426,11 +450,21 @@ export async function validateFileSearchStore(
       }
     }
 
-    // Store is valid
+    // Only failed documents
+    if (failedCount > 0 && activeCount === 0) {
+      return {
+        isValid: false,
+        status: 'no_documents',
+        message: `Todos os ${failedCount} documento(s) falharam na indexação`,
+        store,
+      }
+    }
+
+    // Fallback - store exists, consider it potentially valid
     return {
       isValid: true,
       status: 'valid',
-      message: `Store válido com ${activeCount} documento(s) ativo(s)`,
+      message: `Store existente (active: ${activeCount}, pending: ${pendingCount}, failed: ${failedCount})`,
       store,
     }
   } catch (err) {
@@ -502,7 +536,8 @@ export async function cleanupInvalidStoreReference(
       .from('ai_knowledge_files')
       .update({
         indexing_status: 'pending',
-        google_file_id: null,
+        external_file_id: null,
+        external_file_uri: null,
       })
       .eq('agent_id', agentId)
       .eq('indexing_status', 'completed')
