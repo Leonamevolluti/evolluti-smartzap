@@ -34,6 +34,8 @@ export interface CreateAIAgentParams {
   rag_max_results?: number
   // Handoff config
   handoff_enabled?: boolean
+  // Booking tool config
+  booking_tool_enabled?: boolean
 }
 
 export interface UpdateAIAgentParams {
@@ -59,6 +61,8 @@ export interface UpdateAIAgentParams {
   rag_max_results?: number
   // Handoff config
   handoff_enabled?: boolean
+  // Booking tool config
+  booking_tool_enabled?: boolean
 }
 
 // =============================================================================

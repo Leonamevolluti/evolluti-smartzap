@@ -159,6 +159,10 @@ export async function GET() {
                 'ai_prompts',
                 'ocr_provider',
                 'ocr_gemini_model',
+                // Prompts de estratégia (chaves individuais - fonte única: banco)
+                'strategyMarketing',
+                'strategyUtility',
+                'strategyBypass',
             ]) || { data: null, error: null }
 
         if (error) {
@@ -200,9 +204,17 @@ export async function GET() {
         const fallback = prepareAiFallbackUpdate(
             parseJsonSetting(settingsMap.get('ai_fallback') as string | null, DEFAULT_AI_FALLBACK)
         )
-        const prompts = prepareAiPromptsUpdate(
-            parseJsonSetting(settingsMap.get('ai_prompts') as string | null, DEFAULT_AI_PROMPTS)
-        )
+
+        // Prompts base do JSON ai_prompts
+        const basePrompts = parseJsonSetting(settingsMap.get('ai_prompts') as string | null, {})
+
+        // Prompts de estratégia das chaves individuais (fonte única: banco, SEM fallback de código)
+        const prompts = prepareAiPromptsUpdate({
+            ...basePrompts,
+            strategyMarketing: settingsMap.get('strategyMarketing') as string || '',
+            strategyUtility: settingsMap.get('strategyUtility') as string || '',
+            strategyBypass: settingsMap.get('strategyBypass') as string || '',
+        })
 
         // OCR Settings
         const mistralKey = settingsMap.get('mistral_api_key') || process.env.MISTRAL_API_KEY || ''
@@ -345,12 +357,48 @@ export async function POST(request: NextRequest) {
 
         if (prompts) {
             const currentPrompts = await getAiPromptsConfig()
-            const normalizedPrompts = prepareAiPromptsUpdate({ ...currentPrompts, ...prompts })
+
+            // Separa prompts de estratégia (chaves individuais) dos prompts base (JSON)
+            const { strategyMarketing, strategyUtility, strategyBypass, ...basePrompts } = {
+                ...currentPrompts,
+                ...prompts,
+            }
+
+            // Salva prompts base no JSON ai_prompts
+            const normalizedBasePrompts = {
+                templateShort: basePrompts.templateShort || '',
+                utilityGenerationTemplate: basePrompts.utilityGenerationTemplate || '',
+                utilityJudgeTemplate: basePrompts.utilityJudgeTemplate || '',
+                flowFormTemplate: basePrompts.flowFormTemplate || '',
+            }
             updates.push({
                 key: 'ai_prompts',
-                value: JSON.stringify(normalizedPrompts),
+                value: JSON.stringify(normalizedBasePrompts),
                 updated_at: now,
             })
+
+            // Salva prompts de estratégia em chaves individuais (fonte única: banco)
+            if (prompts.strategyMarketing !== undefined) {
+                updates.push({
+                    key: 'strategyMarketing',
+                    value: strategyMarketing || '',
+                    updated_at: now,
+                })
+            }
+            if (prompts.strategyUtility !== undefined) {
+                updates.push({
+                    key: 'strategyUtility',
+                    value: strategyUtility || '',
+                    updated_at: now,
+                })
+            }
+            if (prompts.strategyBypass !== undefined) {
+                updates.push({
+                    key: 'strategyBypass',
+                    value: strategyBypass || '',
+                    updated_at: now,
+                })
+            }
         }
 
         // OCR: Save provider selection

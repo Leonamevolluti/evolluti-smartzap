@@ -400,6 +400,40 @@ export async function processChatAgent(
       tools.searchKnowledgeBase = searchKnowledgeBaseTool
     }
 
+    // Booking Flow tool - only created if agent has booking tool enabled
+    if (agent.booking_tool_enabled) {
+      const { sendBookingFlow, checkBookingPrerequisites, BOOKING_TOOL_DESCRIPTION } = await import('@/lib/ai/tools/booking-tool')
+
+      // Check if prerequisites are met (async check)
+      const prereqs = await checkBookingPrerequisites()
+
+      if (prereqs.ready) {
+        const sendBookingFlowTool = tool({
+          description: BOOKING_TOOL_DESCRIPTION,
+          inputSchema: z.object({}), // No parameters needed
+          execute: async () => {
+            console.log(`[chat-agent] LLM requested booking flow for: ${conversation.phone}`)
+            const result = await sendBookingFlow(conversation.phone)
+
+            if (result.success) {
+              return {
+                sent: true,
+                message: 'Formulário de agendamento enviado com sucesso. O cliente verá os horários disponíveis.',
+              }
+            }
+            return {
+              sent: false,
+              message: `Não foi possível enviar o formulário: ${result.error}`,
+            }
+          },
+        })
+        tools.sendBookingFlow = sendBookingFlowTool
+        console.log(`[chat-agent] Booking tool enabled and ready`)
+      } else {
+        console.log(`[chat-agent] Booking tool enabled but prerequisites not met: ${prereqs.missing.join(', ')}`)
+      }
+    }
+
     console.log(`[chat-agent] Generating response with tools: ${Object.keys(tools).join(', ')}`)
 
     // Generate with multi-step support (LLM can search, then respond)

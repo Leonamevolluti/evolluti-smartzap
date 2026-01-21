@@ -42,6 +42,8 @@ const updateAgentSchema = z.object({
   rag_max_results: z.number().int().min(1).max(20).optional(),
   // Handoff config
   handoff_enabled: z.boolean().optional(),
+  // Booking tool config
+  booking_tool_enabled: z.boolean().optional(),
 })
 
 /**

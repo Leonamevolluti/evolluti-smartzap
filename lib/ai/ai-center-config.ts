@@ -12,6 +12,10 @@ const SETTINGS_KEYS = {
   routes: 'ai_routes',
   fallback: 'ai_fallback',
   prompts: 'ai_prompts',
+  // Chaves individuais para prompts de estratégia (fonte única de verdade: banco)
+  strategyMarketing: 'strategyMarketing',
+  strategyUtility: 'strategyUtility',
+  strategyBypass: 'strategyBypass',
 } as const
 
 const CACHE_TTL = 60000
@@ -66,6 +70,31 @@ function normalizeFallback(input?: Partial<AiFallbackConfig> | null): AiFallback
   }
 }
 
+// Normaliza prompts gerais (usa defaults do código como fallback)
+function normalizeBasePrompts(input?: Partial<AiPromptsConfig> | null): Omit<AiPromptsConfig, 'strategyMarketing' | 'strategyUtility' | 'strategyBypass'> {
+  const next = { ...DEFAULT_AI_PROMPTS, ...(input || {}) }
+  return {
+    templateShort: next.templateShort || DEFAULT_AI_PROMPTS.templateShort,
+    utilityGenerationTemplate: next.utilityGenerationTemplate || DEFAULT_AI_PROMPTS.utilityGenerationTemplate,
+    utilityJudgeTemplate: next.utilityJudgeTemplate || DEFAULT_AI_PROMPTS.utilityJudgeTemplate,
+    flowFormTemplate: next.flowFormTemplate || DEFAULT_AI_PROMPTS.flowFormTemplate,
+  }
+}
+
+// Normaliza prompts de estratégia (fonte única: banco, SEM fallback de código)
+function normalizeStrategyPrompts(strategies: {
+  marketing: string | null
+  utility: string | null
+  bypass: string | null
+}): Pick<AiPromptsConfig, 'strategyMarketing' | 'strategyUtility' | 'strategyBypass'> {
+  return {
+    strategyMarketing: strategies.marketing || '',
+    strategyUtility: strategies.utility || '',
+    strategyBypass: strategies.bypass || '',
+  }
+}
+
+// Função de compatibilidade para preparar updates (mantém comportamento antigo)
 function normalizePrompts(input?: Partial<AiPromptsConfig> | null): AiPromptsConfig {
   const next = { ...DEFAULT_AI_PROMPTS, ...(input || {}) }
   return {
@@ -73,10 +102,10 @@ function normalizePrompts(input?: Partial<AiPromptsConfig> | null): AiPromptsCon
     utilityGenerationTemplate: next.utilityGenerationTemplate || DEFAULT_AI_PROMPTS.utilityGenerationTemplate,
     utilityJudgeTemplate: next.utilityJudgeTemplate || DEFAULT_AI_PROMPTS.utilityJudgeTemplate,
     flowFormTemplate: next.flowFormTemplate || DEFAULT_AI_PROMPTS.flowFormTemplate,
-    // Estratégias de geração de templates
-    strategyMarketing: next.strategyMarketing || DEFAULT_AI_PROMPTS.strategyMarketing,
-    strategyUtility: next.strategyUtility || DEFAULT_AI_PROMPTS.strategyUtility,
-    strategyBypass: next.strategyBypass || DEFAULT_AI_PROMPTS.strategyBypass,
+    // Para updates, mantém o valor do input (sem fallback de código)
+    strategyMarketing: next.strategyMarketing || '',
+    strategyUtility: next.strategyUtility || '',
+    strategyBypass: next.strategyBypass || '',
   }
 }
 
@@ -115,9 +144,25 @@ export async function getAiFallbackConfig(): Promise<AiFallbackConfig> {
 
 export async function getAiPromptsConfig(): Promise<AiPromptsConfig> {
   if (cachedPrompts && isCacheValid()) return cachedPrompts
-  const raw = await getSettingValue(SETTINGS_KEYS.prompts)
-  const parsed = parseJsonSetting<Partial<AiPromptsConfig>>(raw, DEFAULT_AI_PROMPTS)
-  cachedPrompts = normalizePrompts(parsed)
+
+  // Busca prompts base do JSON ai_prompts
+  const rawBase = await getSettingValue(SETTINGS_KEYS.prompts)
+  const parsedBase = parseJsonSetting<Partial<AiPromptsConfig>>(rawBase, {})
+  const basePrompts = normalizeBasePrompts(parsedBase)
+
+  // Busca prompts de estratégia das chaves individuais (fonte única: banco)
+  const [marketing, utility, bypass] = await Promise.all([
+    getSettingValue(SETTINGS_KEYS.strategyMarketing),
+    getSettingValue(SETTINGS_KEYS.strategyUtility),
+    getSettingValue(SETTINGS_KEYS.strategyBypass),
+  ])
+  const strategyPrompts = normalizeStrategyPrompts({ marketing, utility, bypass })
+
+  // Combina os dois
+  cachedPrompts = {
+    ...basePrompts,
+    ...strategyPrompts,
+  }
   cacheTime = Date.now()
   return cachedPrompts
 }

@@ -79,4 +79,44 @@ Template: "Olá {{1}}, seu {{2}} referente a {{3}} está disponível. Acesse at�
 | {{2}} | Tipo de benefício | desconto de 30% |
 | {{3}} | Produto/serviço | plano anual |
 | {{4}} | Prazo limite | domingo |
+
+## 💡 EXEMPLOS DE INPUT DO USUÁRIO
+
+O usuário quer VENDER algo mas precisa que o template PAREÇA uma notificação de sistema.
+
+**Exemplo 1 - Evento/Curso (Lançamento):**
+INPUT: "Quero promover a Imersão Vibecoding, workshop de sistemas com IA, dias 28 e 29 janeiro às 19h. Tem garantia de 100%. Link: vibecoding.com.br. Precisa parecer notificação, não promoção."
+
+TEMPLATE: "Olá {{1}}, informamos que os detalhes sobre {{2}} foram atualizados. O cronograma referente a {{3}} está disponível. Verifique as informações sobre {{4}}."
+VARIÁVEIS:
+- {{2}} = "a Imersão Vibecoding - Workshop de Sistemas com IA"
+- {{3}} = "os dias 28 e 29 de janeiro às 19h"
+- {{4}} = "sua garantia de 100% de reembolso"
+
+**Exemplo 2 - Promoção/Desconto:**
+INPUT: "Black Friday, 50% de desconto em todos os produtos, só até domingo. Frete grátis. Link: loja.com.br. Camuflar como utility."
+
+TEMPLATE: "Olá {{1}}, há uma atualização sobre {{2}} disponível para sua conta. Condições referentes a {{3}} válidas até {{4}}."
+VARIÁVEIS:
+- {{2}} = "os preços com 50% de desconto"
+- {{3}} = "frete grátis em todos os produtos"
+- {{4}} = "domingo às 23h59"
+
+**Exemplo 3 - Carrinho Abandonado:**
+INPUT: "Lembrar do carrinho abandonado e oferecer 10% de desconto para finalizar. Válido por 24h."
+
+TEMPLATE: "Olá {{1}}, seus itens em {{2}} ainda estão reservados. {{3}} disponível até {{4}}."
+VARIÁVEIS:
+- {{2}} = "seu carrinho de compras"
+- {{3}} = "Benefício de 10% OFF exclusivo"
+- {{4}} = "amanhã às 23h59"
+
+**Exemplo 4 - Reengajamento:**
+INPUT: "Clientes sumidos há 30 dias. Oferecer cupom de 20% para voltar. Válido por 48h."
+
+TEMPLATE: "Olá {{1}}, identificamos uma atualização em {{2}}. Preparamos {{3}} válido até {{4}}."
+VARIÁVEIS:
+- {{2}} = "sua conta"
+- {{3}} = "um cupom exclusivo de 20% OFF"
+- {{4}} = "48 horas"
 `;

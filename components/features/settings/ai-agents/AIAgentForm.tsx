@@ -83,6 +83,7 @@ export function AIAgentForm({
   const [isActive, setIsActive] = useState(true)
   const [isDefault, setIsDefault] = useState(false)
   const [handoffEnabled, setHandoffEnabled] = useState(true)
+  const [bookingToolEnabled, setBookingToolEnabled] = useState(false)
 
   // RAG: Embedding config
   const [embeddingProvider, setEmbeddingProvider] = useState<EmbeddingProvider>(DEFAULT_EMBEDDING_CONFIG.provider)
@@ -186,6 +187,7 @@ export function AIAgentForm({
       setIsActive(agent.is_active)
       setIsDefault(agent.is_default)
       setHandoffEnabled(agent.handoff_enabled ?? true)
+      setBookingToolEnabled(agent.booking_tool_enabled ?? false)
       // RAG config
       setEmbeddingProvider(agent.embedding_provider || DEFAULT_EMBEDDING_CONFIG.provider)
       setEmbeddingModel(agent.embedding_model || DEFAULT_EMBEDDING_CONFIG.model)
@@ -208,6 +210,7 @@ export function AIAgentForm({
       setIsActive(true)
       setIsDefault(false)
       setHandoffEnabled(true)
+      setBookingToolEnabled(false)
       // RAG config defaults
       setEmbeddingProvider(DEFAULT_EMBEDDING_CONFIG.provider)
       setEmbeddingModel(DEFAULT_EMBEDDING_CONFIG.model)
@@ -235,6 +238,7 @@ export function AIAgentForm({
       is_active: isActive,
       is_default: isDefault,
       handoff_enabled: handoffEnabled,
+      booking_tool_enabled: bookingToolEnabled,
       // RAG config
       embedding_provider: embeddingProvider,
       embedding_model: embeddingModel,
@@ -778,6 +782,24 @@ export function AIAgentForm({
                   id="handoffEnabled"
                   checked={handoffEnabled}
                   onCheckedChange={setHandoffEnabled}
+                />
+              </div>
+
+              <div className="flex items-center justify-between border-t border-[var(--ds-border-default)] pt-3">
+                <div>
+                  <Label htmlFor="bookingToolEnabled" className="text-sm">
+                    Tool de Agendamento
+                  </Label>
+                  <p className="text-xs text-[var(--ds-text-muted)]">
+                    {bookingToolEnabled
+                      ? 'Agente envia formulário de agendamento'
+                      : 'Agente não tem acesso ao calendário'}
+                  </p>
+                </div>
+                <Switch
+                  id="bookingToolEnabled"
+                  checked={bookingToolEnabled}
+                  onCheckedChange={setBookingToolEnabled}
                 />
               </div>
             </div>
