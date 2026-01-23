@@ -276,7 +276,7 @@ export async function processInboxAIWorkflow(context: WorkflowContext) {
 
   console.log(`📡 [WORKFLOW] context.call RETURNED!`)
   console.log(`📡 [WORKFLOW] Response status: ${aiCallResult.status}`)
-  console.log(`📡 [WORKFLOW] Response headers:`, JSON.stringify(aiCallResult.headers))
+  console.log(`📡 [WORKFLOW] Response header:`, JSON.stringify(aiCallResult.header))
   console.log(`📡 [WORKFLOW] Response body:`, JSON.stringify(aiCallResult.body))
 
   // Verifica se a chamada HTTP foi bem sucedida
