@@ -1153,6 +1153,8 @@ CREATE INDEX idx_inbox_conversations_mode_status ON public.inbox_conversations U
 
 CREATE INDEX idx_inbox_conversations_phone ON public.inbox_conversations USING btree (phone);
 
+CREATE INDEX idx_inbox_conversations_human_mode_expires ON public.inbox_conversations USING btree (human_mode_expires_at) WHERE (mode = 'human' AND human_mode_expires_at IS NOT NULL);
+
 CREATE INDEX idx_inbox_messages_conversation_id ON public.inbox_messages USING btree (conversation_id);
 
 CREATE INDEX idx_inbox_messages_created_at ON public.inbox_messages USING btree (created_at);

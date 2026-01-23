@@ -23,9 +23,14 @@ export const maxDuration = 60
 
 // URL base para callbacks do workflow - prioriza env var configurada manualmente
 const getWorkflowUrl = () => {
-  const url = process.env.UPSTASH_WORKFLOW_URL
-    || process.env.NEXT_PUBLIC_APP_URL
-    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+  const upstashUrl = process.env.UPSTASH_WORKFLOW_URL
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL
+  const vercelUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null
+
+  const url = upstashUrl || appUrl || vercelUrl
+
+  console.log(`🔧 [WORKFLOW-ROUTE] URL config: UPSTASH_WORKFLOW_URL=${upstashUrl}, NEXT_PUBLIC_APP_URL=${appUrl}, VERCEL_URL=${process.env.VERCEL_URL}`)
+  console.log(`🔧 [WORKFLOW-ROUTE] Final URL: ${url ? `${url}/api/inbox/ai-workflow` : 'auto-detect'}`)
 
   if (url) {
     return `${url}/api/inbox/ai-workflow`

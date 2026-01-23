@@ -51,6 +51,7 @@ export async function processInboxAIWorkflow(context: WorkflowContext) {
   console.log(`🚀 [WORKFLOW] ========================================`)
   console.log(`🚀 [WORKFLOW] STARTING for conversation: ${conversationId}`)
   console.log(`🚀 [WORKFLOW] Payload:`, JSON.stringify(payload))
+  console.log(`🚀 [WORKFLOW] Run ID: ${context.workflowRunId}`)
   console.log(`🚀 [WORKFLOW] ========================================`)
 
   // =========================================================================
@@ -67,132 +68,110 @@ export async function processInboxAIWorkflow(context: WorkflowContext) {
 
   console.log(`📦 [WORKFLOW] Step 2: Fetching conversation and agent...`)
 
-  const fetchResult = await context.run('fetch-conversation-and-agent', async () => {
-    console.log(`📦 [FETCH] Inside context.run - starting fetch...`)
+  // Dividido em múltiplos context.run para isolar problemas de serialização
 
+  // Step 2a: Fetch conversation
+  const convResult = await context.run('fetch-conversation', async () => {
+    console.log(`📦 [FETCH-CONV] Starting...`)
     const { inboxDb } = await import('./inbox-db')
-    const { getSupabaseAdmin } = await import('@/lib/supabase')
 
-    // Busca conversa
-    console.log(`📦 [FETCH] Getting conversation ${conversationId}...`)
     const conversationData = await inboxDb.getConversation(conversationId)
     if (!conversationData) {
-      console.log(`❌ [FETCH] Conversation not found!`)
+      console.log(`❌ [FETCH-CONV] Not found!`)
       return { valid: false as const, reason: 'conversation-not-found' }
     }
-    console.log(`📦 [FETCH] Conversation found: mode=${conversationData.mode}, phone=${conversationData.phone}`)
+    console.log(`📦 [FETCH-CONV] Found: mode=${conversationData.mode}`)
 
-    // Verifica se ainda está em modo bot
     if (conversationData.mode !== 'bot') {
-      console.log(`❌ [FETCH] Not in bot mode: ${conversationData.mode}`)
-      return { valid: false as const, reason: 'not-in-bot-mode', mode: conversationData.mode }
+      return { valid: false as const, reason: 'not-in-bot-mode' }
     }
 
-    // Verifica se automação está pausada
     if (conversationData.automation_paused_until) {
       const pauseTime = new Date(conversationData.automation_paused_until).getTime()
       if (pauseTime > Date.now()) {
-        console.log(`❌ [FETCH] Automation paused until ${conversationData.automation_paused_until}`)
         return { valid: false as const, reason: 'automation-paused' }
       }
     }
 
-    // Busca agente
-    console.log(`📦 [FETCH] Getting Supabase admin...`)
-    const supabase = getSupabaseAdmin()
-    if (!supabase) {
-      console.log(`❌ [FETCH] Supabase not configured!`)
-      return { valid: false as const, reason: 'supabase-not-configured' }
-    }
-    console.log(`📦 [FETCH] Supabase admin OK`)
-
-    let agentData: AIAgent | null = null
-
-    // Primeiro tenta agente específico da conversa
-    if (conversationData.ai_agent_id) {
-      console.log(`📦 [FETCH] Fetching specific agent: ${conversationData.ai_agent_id}`)
-      const { data } = await supabase
-        .from('ai_agents')
-        .select('*')
-        .eq('id', conversationData.ai_agent_id)
-        .single()
-      agentData = data as AIAgent | null
-      console.log(`📦 [FETCH] Specific agent result: ${agentData ? agentData.name : 'null'}`)
-    }
-
-    // Se não tem, busca default
-    if (!agentData) {
-      console.log(`📦 [FETCH] Fetching default agent...`)
-      const { data } = await supabase
-        .from('ai_agents')
-        .select('*')
-        .eq('is_active', true)
-        .eq('is_default', true)
-        .single()
-      agentData = data as AIAgent | null
-      console.log(`📦 [FETCH] Default agent result: ${agentData ? agentData.name : 'null'}`)
-    }
-
-    if (!agentData) {
-      console.log(`❌ [FETCH] No agent configured!`)
-      return { valid: false as const, reason: 'no-agent-configured' }
-    }
-
-    if (!agentData.is_active) {
-      console.log(`❌ [FETCH] Agent not active!`)
-      return { valid: false as const, reason: 'agent-not-active' }
-    }
-
-    // Valida que o agente tem system_prompt configurado
-    if (!agentData.system_prompt || agentData.system_prompt.trim().length < 10) {
-      console.log(`❌ [FETCH] Agent missing system prompt!`)
-      return { valid: false as const, reason: 'agent-missing-system-prompt' }
-    }
-
-    // Busca mensagens recentes
-    console.log(`📦 [FETCH] Fetching messages...`)
-    const { messages: messagesData } = await inboxDb.listMessages(conversationId, { limit: 20 })
-    console.log(`📦 [FETCH] Found ${messagesData.length} messages`)
-
-    // Serializa os dados para evitar problemas com objetos complexos do Supabase
-    // O Upstash Workflow precisa serializar/deserializar o retorno do context.run
-    console.log(`✅ [FETCH] All data fetched successfully!`)
-    console.log(`📦 [FETCH] Serializing response...`)
-
-    const serializedResult = {
-      valid: true as const,
-      conversation: JSON.parse(JSON.stringify(conversationData)),
-      agent: JSON.parse(JSON.stringify(agentData)),
-      messages: JSON.parse(JSON.stringify(messagesData)),
-    }
-
-    console.log(`📦 [FETCH] Serialization complete!`)
-    return serializedResult
+    // Serializa imediatamente
+    const serialized = JSON.parse(JSON.stringify(conversationData))
+    console.log(`✅ [FETCH-CONV] Serialized OK`)
+    return { valid: true as const, conversation: serialized }
   })
 
-  console.log(`📦 [WORKFLOW] Step 2 result: valid=${fetchResult.valid}`)
-
-  // Se não é válido, faz cleanup e retorna
-  if (!fetchResult.valid) {
-    console.log(`⚠️ [WORKFLOW] Skipping AI processing: ${fetchResult.reason}`)
-
-    await context.run('cleanup-invalid', async () => {
-      console.log(`🧹 [CLEANUP] Cleaning up invalid workflow...`)
+  if (!convResult.valid) {
+    console.log(`⚠️ [WORKFLOW] Conv fetch failed: ${convResult.reason}`)
+    await context.run('cleanup-conv-invalid', async () => {
       const redis = getRedis()
       if (redis) {
         await redis.del(REDIS_KEYS.inboxLastMessage(conversationId))
         await redis.del(REDIS_KEYS.inboxWorkflowPending(conversationId))
       }
-      console.log(`🧹 [CLEANUP] Done`)
     })
-
-    return { status: 'skipped', reason: fetchResult.reason }
+    return { status: 'skipped', reason: convResult.reason }
   }
 
-  // Extrai dados com tipos garantidos
-  const conversation = fetchResult.conversation
-  const agent = fetchResult.agent
-  const messages = fetchResult.messages
+  const conversation = convResult.conversation
+
+  // Step 2b: Fetch agent
+  const agentResult = await context.run('fetch-agent', async () => {
+    console.log(`📦 [FETCH-AGENT] Starting for agent: ${conversation.ai_agent_id}`)
+    const { getSupabaseAdmin } = await import('@/lib/supabase')
+    const supabase = getSupabaseAdmin()
+    if (!supabase) return { valid: false as const, reason: 'supabase-not-configured' }
+
+    let agentData = null
+    if (conversation.ai_agent_id) {
+      const { data } = await supabase.from('ai_agents').select('*').eq('id', conversation.ai_agent_id).single()
+      agentData = data
+    }
+    if (!agentData) {
+      const { data } = await supabase.from('ai_agents').select('*').eq('is_active', true).eq('is_default', true).single()
+      agentData = data
+    }
+
+    if (!agentData) return { valid: false as const, reason: 'no-agent-configured' }
+    if (!agentData.is_active) return { valid: false as const, reason: 'agent-not-active' }
+    if (!agentData.system_prompt || agentData.system_prompt.trim().length < 10) {
+      return { valid: false as const, reason: 'agent-missing-system-prompt' }
+    }
+
+    const serialized = JSON.parse(JSON.stringify(agentData))
+    console.log(`✅ [FETCH-AGENT] Serialized OK: ${serialized.name}`)
+    return { valid: true as const, agent: serialized }
+  })
+
+  if (!agentResult.valid) {
+    console.log(`⚠️ [WORKFLOW] Agent fetch failed: ${agentResult.reason}`)
+    await context.run('cleanup-agent-invalid', async () => {
+      const redis = getRedis()
+      if (redis) {
+        await redis.del(REDIS_KEYS.inboxLastMessage(conversationId))
+        await redis.del(REDIS_KEYS.inboxWorkflowPending(conversationId))
+      }
+    })
+    return { status: 'skipped', reason: agentResult.reason }
+  }
+
+  const agent = agentResult.agent
+
+  // Step 2c: Fetch messages
+  const msgsResult = await context.run('fetch-messages', async () => {
+    console.log(`📦 [FETCH-MSGS] Starting...`)
+    const { inboxDb } = await import('./inbox-db')
+    const { messages } = await inboxDb.listMessages(conversationId, { limit: 20 })
+    console.log(`📦 [FETCH-MSGS] Found ${messages.length} messages`)
+    const serialized = JSON.parse(JSON.stringify(messages))
+    console.log(`✅ [FETCH-MSGS] Serialized OK`)
+    return { messages: serialized }
+  })
+
+  const messages = msgsResult.messages
+
+  // Validação final
+  const fetchResult = { valid: true as const, conversation, agent, messages }
+
+  console.log(`📦 [WORKFLOW] Step 2 result: valid=${fetchResult.valid}`)
 
   console.log(`✅ [WORKFLOW] Step 2 complete! Agent: ${agent.name}, Messages: ${messages.length}`)
 

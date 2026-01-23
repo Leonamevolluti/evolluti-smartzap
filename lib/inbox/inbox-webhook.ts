@@ -124,6 +124,8 @@ export async function handleInboundMessage(
     currentMode = 'bot'
   }
 
+  console.log(`🤖 [INBOX] Checking AI trigger: mode=${currentMode}, automationPausedUntil=${conversation.automation_paused_until}`)
+
   if (currentMode === 'bot') {
     // T066: Check if automation is paused
     if (isAutomationPaused(conversation.automation_paused_until)) {
@@ -131,8 +133,12 @@ export async function handleInboundMessage(
         `[Inbox] Automation paused until ${conversation.automation_paused_until}, skipping AI processing`
       )
     } else {
+      console.log(`🤖 [INBOX] Calling triggerAIProcessing for conversation ${conversation.id}`)
       triggeredAI = await triggerAIProcessing(conversation, message)
+      console.log(`🤖 [INBOX] triggerAIProcessing returned: ${triggeredAI}`)
     }
+  } else {
+    console.log(`🤖 [INBOX] Skipping AI trigger because mode=${currentMode}`)
   }
 
   return {
@@ -162,8 +168,12 @@ async function triggerAIProcessing(
   message: InboxMessage
 ): Promise<boolean> {
   const conversationId = conversation.id
+  console.log(`🔥 [TRIGGER] Starting triggerAIProcessing for ${conversationId}`)
+
   const redis = getRedis()
   const workflowClient = getWorkflowClient()
+
+  console.log(`🔥 [TRIGGER] Redis available: ${!!redis}, WorkflowClient available: ${!!workflowClient}`)
 
   // Verifica se temos os clientes necessários
   if (!workflowClient) {
@@ -173,12 +183,15 @@ async function triggerAIProcessing(
 
   // Atualiza timestamp da última mensagem (para debounce distribuído)
   if (redis) {
-    await redis.set(REDIS_KEYS.inboxLastMessage(conversationId), Date.now().toString())
+    const timestamp = Date.now().toString()
+    await redis.set(REDIS_KEYS.inboxLastMessage(conversationId), timestamp)
+    console.log(`🔥 [TRIGGER] Set last message timestamp: ${timestamp}`)
   }
 
   // Verifica se já existe workflow pendente para esta conversa
   if (redis) {
     const pendingWorkflow = await redis.get(REDIS_KEYS.inboxWorkflowPending(conversationId))
+    console.log(`🔥 [TRIGGER] Pending workflow check: ${pendingWorkflow}`)
 
     if (pendingWorkflow) {
       // Workflow já existe, só atualizamos o timestamp (ele vai buscar msgs novas)
@@ -190,6 +203,7 @@ async function triggerAIProcessing(
 
     // Marca workflow como pendente (TTL de 5 min para safety)
     await redis.set(REDIS_KEYS.inboxWorkflowPending(conversationId), 'true', { ex: 300 })
+    console.log(`🔥 [TRIGGER] Set workflow pending flag`)
   }
 
   // Dispara novo workflow
@@ -201,7 +215,7 @@ async function triggerAIProcessing(
 
   const workflowUrl = `${baseUrl}/api/inbox/ai-workflow`
 
-  console.log(`[Inbox] Triggering AI workflow for ${conversationId} at ${workflowUrl}`)
+  console.log(`🔥 [TRIGGER] Triggering AI workflow for ${conversationId} at ${workflowUrl}`)
 
   try {
     const payload: InboxAIWorkflowPayload = {
@@ -209,15 +223,17 @@ async function triggerAIProcessing(
       triggeredAt: Date.now(),
     }
 
+    console.log(`🔥 [TRIGGER] Calling workflowClient.trigger with payload:`, JSON.stringify(payload))
+
     await workflowClient.trigger({
       url: workflowUrl,
       body: payload,
     })
 
-    console.log(`[Inbox] AI workflow triggered successfully for ${conversationId}`)
+    console.log(`✅ [TRIGGER] AI workflow triggered successfully for ${conversationId}`)
     return true
   } catch (error) {
-    console.error('[Inbox] Failed to trigger AI workflow:', error)
+    console.error('❌ [TRIGGER] Failed to trigger AI workflow:', error)
 
     // Limpa flag de pendente em caso de erro
     if (redis) {
