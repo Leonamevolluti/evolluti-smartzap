@@ -135,7 +135,7 @@ test.describe('Configurações', () => {
 
       // Navega para home
       await page.goto('/')
-      await page.waitForLoadState('networkidle')
+      await page.waitForLoadState('domcontentloaded')
 
       // Não deve mais estar em settings
       expect(await settingsPage.isVisible()).toBe(false)

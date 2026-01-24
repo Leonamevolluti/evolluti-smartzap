@@ -111,6 +111,31 @@ test.describe('Campanhas', () => {
       // Deve sair do wizard (pode ir para / ou /campaigns dependendo do histórico)
       await expect(page).not.toHaveURL('/campaigns/new', { timeout: 5000 })
     })
+
+    test('deve bloquear avanço sem template selecionado', async ({ page, generateUniqueCampaign }) => {
+      const wizardPage = new CampaignWizardPage(page)
+      const campaign = generateUniqueCampaign()
+
+      await wizardPage.goto()
+      await wizardPage.fillCampaignName(campaign.name)
+
+      const isDisabled = await wizardPage.continueButton.isDisabled()
+      const hasMessage = await wizardPage.stepMessage.isVisible().catch(() => false)
+
+      expect(isDisabled || hasMessage).toBe(true)
+    })
+
+    test('deve habilitar Continuar ao selecionar template (quando existir)', async ({ page }) => {
+      const wizardPage = new CampaignWizardPage(page)
+
+      await wizardPage.goto()
+
+      const templateCount = await wizardPage.templateButtons.count()
+      test.skip(templateCount === 0, 'Nenhum template disponível para seleção')
+
+      await wizardPage.selectFirstTemplate()
+      await expect(wizardPage.continueButton).toBeEnabled()
+    })
   })
 
   test.describe('Busca e Filtros', () => {
@@ -143,6 +168,27 @@ test.describe('Campanhas', () => {
 
       // Campo deve estar vazio
       expect(await campaignsPage.searchInput.inputValue()).toBe('')
+    })
+
+    test('deve permitir abrir o filtro de status quando disponível', async ({ page }) => {
+      const campaignsPage = new CampaignsPage(page)
+
+      await campaignsPage.goto()
+      await campaignsPage.waitForLoad()
+
+      const statusFilter = campaignsPage.statusFilter.first()
+      const hasStatusFilter = (await campaignsPage.statusFilter.count()) > 0
+
+      test.skip(!hasStatusFilter, 'Filtro de status não disponível nesta UI')
+
+      await expect(statusFilter).toBeVisible()
+      await statusFilter.click()
+
+      const option = page.getByRole('option', { name: /todos/i })
+      if (await option.count()) {
+        await option.click()
+        await page.waitForLoadState('networkidle')
+      }
     })
   })
 
@@ -223,6 +269,21 @@ test.describe('Campanhas', () => {
   })
 
   test.describe('Navegação', () => {
+    test('deve abrir detalhes ao clicar na primeira campanha quando existir', async ({ page }) => {
+      const campaignsPage = new CampaignsPage(page)
+
+      await campaignsPage.goto()
+      await campaignsPage.waitForLoad()
+
+      const total = await campaignsPage.campaignCards.count()
+      test.skip(total === 0, 'Sem campanhas para abrir detalhes')
+
+      const firstCard = campaignsPage.campaignCards.first()
+      await firstCard.click()
+
+      await expect(page).toHaveURL(/\/campaigns\/[a-z0-9-]+/, { timeout: 5000 })
+    })
+
     test('deve exibir mensagem quando não há campanhas', async ({ page }) => {
       const campaignsPage = new CampaignsPage(page)
 
