@@ -13,6 +13,7 @@
 - [Como Usar](#-como-usar)
 - [Configurações](#%EF%B8%8F-configurações)
 - [Problemas Comuns](#-problemas-comuns)
+- [Recuperação de Senha](#recuperação-de-senha)
 - [Suporte](#-suporte)
 
 ---
@@ -94,7 +95,7 @@ Este guia vai te levar do zero até ter o SmartZap funcionando.
 ```mermaid
 flowchart LR
     A[Fork no GitHub] --> B[Deploy na Vercel]
-    B --> C[Abrir /install/start]
+    B --> C[Abrir /install]
     C --> D[Wizard configura tudo]
     D --> E[Pronto!]
 ```
@@ -147,7 +148,7 @@ Antes de começar, você precisa de contas nestes serviços:
 ### Passo 3: Rodar o Wizard de Instalação
 
 1. **Acesse o wizard**
-   - Abra: `https://SEU-PROJETO.vercel.app/install/start`
+   - Abra: `https://SEU-PROJETO.vercel.app/install`
 
 2. **O wizard tem 5 etapas:**
 
@@ -347,6 +348,34 @@ O SmartZap usa dois serviços do Upstash:
 **Solução:**
 - Verifique se completou a instalação via wizard
 - Confirme a senha que você configurou
+
+### Recuperação de Senha
+
+Esqueceu sua senha? Siga estes passos para criar uma nova:
+
+1. **Acesse a Vercel**
+   - Vá em [vercel.com](https://vercel.com) e faça login
+
+2. **Abra seu projeto**
+   - Clique no projeto SmartZap
+
+3. **Edite a variável de ambiente**
+   - Vá em **Settings** → **Environment Variables**
+   - Encontre `MASTER_PASSWORD`
+   - Clique nos 3 pontos → **Edit**
+   - Digite sua nova senha (ex: `minhaNovaSenha123`)
+   - Clique em **Save**
+
+4. **Faça redeploy**
+   - Vá em **Deployments**
+   - No deploy mais recente, clique nos **3 pontos**
+   - Clique em **Redeploy** → **Redeploy**
+
+5. **Pronto!**
+   - Aguarde ~1 minuto
+   - Faça login com a nova senha
+
+> **Dica**: A senha pode ser qualquer texto simples (ex: `MinhaEmpresa2024`). Não precisa gerar hash nem nada complicado.
 
 ### Mensagens não estão sendo enviadas
 
