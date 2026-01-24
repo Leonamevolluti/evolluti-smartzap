@@ -91,22 +91,42 @@ export async function POST(request: NextRequest) {
       console.error('[flow-endpoint] ❌ Erro ao descriptografar:', error)
 
       if (isOaepError) {
-        console.error('[flow-endpoint] 🔑 OAEP Error detectado!')
-        console.error('[flow-endpoint] 💡 Isso geralmente significa que a chave pública configurada no Flow da Meta')
-        console.error('[flow-endpoint]    não corresponde à chave privada armazenada no SmartZap.')
-        console.error('[flow-endpoint] 🛠️  Para resolver:')
-        console.error('[flow-endpoint]    1. Acesse /api/flows/endpoint/keys (GET) para obter a chave pública atual')
-        console.error('[flow-endpoint]    2. Atualize a chave pública na configuração do Flow no Meta Business Manager')
-        console.error('[flow-endpoint]    OU')
-        console.error('[flow-endpoint]    1. Acesse /api/flows/endpoint/keys (POST) para gerar novas chaves')
-        console.error('[flow-endpoint]    2. Use a nova chave pública para reconfigurar o Flow na Meta')
+        console.log('[flow-endpoint] 🔑 OAEP Error detectado! Iniciando auto-recuperação...')
+
+        // Auto-recuperação: regenera chaves e sincroniza com Meta
+        try {
+          const { publicKey: newPublicKey, privateKey: newPrivateKey } = generateKeyPair()
+
+          await Promise.all([
+            settingsDb.set(PRIVATE_KEY_SETTING, newPrivateKey),
+            settingsDb.set(PUBLIC_KEY_SETTING, newPublicKey),
+          ])
+
+          console.log('[flow-endpoint] ✅ Novas chaves RSA geradas')
+
+          // Sincroniza com a Meta
+          const credentials = await getWhatsAppCredentials()
+          if (credentials?.accessToken && credentials?.phoneNumberId) {
+            await metaSetEncryptionPublicKey({
+              accessToken: credentials.accessToken,
+              phoneNumberId: credentials.phoneNumberId,
+              publicKey: newPublicKey,
+            })
+            console.log('[flow-endpoint] ✅ Nova chave pública sincronizada com a Meta')
+            console.log('[flow-endpoint] 💡 As próximas requests devem funcionar automaticamente')
+          } else {
+            console.error('[flow-endpoint] ⚠️ Credenciais WhatsApp não configuradas, sincronização falhou')
+          }
+        } catch (recoveryError) {
+          console.error('[flow-endpoint] ❌ Falha na auto-recuperação:', recoveryError)
+        }
       }
 
       return NextResponse.json(
         {
           error: 'Falha na descriptografia',
           hint: isOaepError
-            ? 'Chave pública no Flow da Meta não corresponde à chave privada do servidor. Verifique a configuração das chaves.'
+            ? 'Chaves foram regeneradas e sincronizadas. Tente novamente.'
             : undefined
         },
         { status: 421 }
