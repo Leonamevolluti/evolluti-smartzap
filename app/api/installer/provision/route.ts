@@ -404,14 +404,37 @@ export async function POST(req: Request) {
         subtitle: step3.subtitle,
       });
 
-      supabaseProject = await findOrCreateSupabaseProject(supabase.pat, async (fraction) => {
-        await sendEvent({
-          type: 'progress',
-          progress: calculateProgress(stepIndex, fraction),
-          title: step3.title,
-          subtitle: fraction < 0.3 ? 'Escaneando setores ocupados...' : 'Alocando nova unidade de memória...',
+      let createTick = 0;
+      let createHeartbeat: ReturnType<typeof setInterval> | null = null;
+      try {
+        createHeartbeat = setInterval(async () => {
+          createTick += 1;
+          const subtitle =
+            createTick <= 6
+              ? 'Escaneando setores ocupados...'
+              : createTick <= 20
+                ? 'Alocando nova unidade de memória...'
+                : 'Provisionamento do Supabase em andamento...';
+          await sendEvent({
+            type: 'progress',
+            progress: calculateProgress(stepIndex, Math.min(0.2 + createTick * 0.01, 0.95)),
+            title: step3.title,
+            subtitle,
+          });
+        }, 6000);
+        supabaseProject = await findOrCreateSupabaseProject(supabase.pat, async (fraction) => {
+          await sendEvent({
+            type: 'progress',
+            progress: calculateProgress(stepIndex, fraction),
+            title: step3.title,
+            subtitle: fraction < 0.3 ? 'Escaneando setores ocupados...' : 'Alocando nova unidade de memória...',
+          });
         });
-      });
+      } finally {
+        if (createHeartbeat) {
+          clearInterval(createHeartbeat);
+        }
+      }
       console.log('[provision] ✅ Step 3/12: Create Supabase Project - COMPLETO', { projectRef: supabaseProject.projectRef, isNew: supabaseProject.isNew });
       stepIndex++;
 
