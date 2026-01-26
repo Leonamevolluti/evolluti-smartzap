@@ -165,24 +165,7 @@ function LoginForm() {
 
       {/* Footer */}
       <p className="text-center text-[var(--ds-text-muted)] text-sm mt-6">
-        SmartZap © {new Date().getFullYear()} |{' '}
-        <a
-          href="https://www.escoladeautomacao.com.br/"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="hover:text-emerald-500 transition-colors"
-        >
-          Escola de Automação
-        </a>
-        {' '}| by{' '}
-        <a
-          href="https://instagram.com/thaleslaray"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="hover:text-emerald-500 transition-colors"
-        >
-          @thaleslaray
-        </a>
+        2026 - Evolluti Tecnologia
       </p>
     </div>
   )
