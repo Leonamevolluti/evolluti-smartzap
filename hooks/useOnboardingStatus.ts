@@ -1,9 +1,7 @@
 'use client'
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useState } from 'react'
-
-const LOCAL_STORAGE_KEY = 'smartzap_onboarding_completed'
+import { useCallback } from 'react'
 
 interface OnboardingStatus {
     onboardingCompleted: boolean
@@ -11,30 +9,16 @@ interface OnboardingStatus {
 }
 
 /**
- * Hook para gerenciar o status do onboarding com fallback em localStorage.
+ * Hook para gerenciar o status do onboarding.
  * 
- * IMPORTANTE: O modal de boas-vindas só deve aparecer se:
- * 1. O banco de dados CONFIRMA que onboarding NÃO foi completado
- * 2. E o localStorage NÃO tem o flag de completo
- * 
- * Isso evita que o modal apareça indevidamente quando:
- * - A API falha temporariamente
- * - Há problemas de rede
- * - O servidor está lento
+ * REGRA SIMPLES:
+ * - Fonte da verdade = BANCO DE DADOS (sempre)
+ * - Se API falha = assume completo (não incomoda o usuário)
+ * - Sem localStorage como fallback (evita problemas de sync)
  */
 export function useOnboardingStatus() {
     const queryClient = useQueryClient()
     
-    // Estado local do fallback
-    const [localCompleted, setLocalCompleted] = useState<boolean | null>(null)
-    
-    // Carrega do localStorage na montagem
-    useEffect(() => {
-        const stored = localStorage.getItem(LOCAL_STORAGE_KEY)
-        setLocalCompleted(stored === 'true')
-    }, [])
-    
-    // Query para buscar do banco
     const { 
         data: dbStatus, 
         isLoading, 
@@ -47,36 +31,16 @@ export function useOnboardingStatus() {
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`)
             }
-            const data = await response.json()
-            
-            // Se banco diz que está completo, salva no localStorage como backup
-            if (data.onboardingCompleted === true) {
-                localStorage.setItem(LOCAL_STORAGE_KEY, 'true')
-            }
-            
-            return data
+            return response.json()
         },
         staleTime: 5 * 60 * 1000,
         gcTime: 10 * 60 * 1000,
-        retry: 2,
-        retryDelay: 1000,
+        retry: 3,           // Tenta 3 vezes antes de desistir
+        retryDelay: 1000,   // 1 segundo entre tentativas
     })
     
-    // Sincroniza localStorage quando DB confirma completo
-    useEffect(() => {
-        if (dbStatus?.onboardingCompleted === true && localCompleted !== true) {
-            localStorage.setItem(LOCAL_STORAGE_KEY, 'true')
-            setLocalCompleted(true)
-        }
-    }, [dbStatus?.onboardingCompleted, localCompleted])
-    
-    // Marca como completo no banco E localStorage
+    // Marca como completo no banco
     const markComplete = useCallback(async () => {
-        // Marca local imediatamente (otimistic update)
-        localStorage.setItem(LOCAL_STORAGE_KEY, 'true')
-        setLocalCompleted(true)
-        
-        // Atualiza no servidor
         try {
             await fetch('/api/settings/onboarding', {
                 method: 'POST',
@@ -86,30 +50,22 @@ export function useOnboardingStatus() {
             refetch()
         } catch (error) {
             console.error('Erro ao salvar onboarding no banco:', error)
-            // Não reverte o localStorage - melhor ter completo local que mostrar modal
         }
         
-        // Invalida queries relacionadas
         queryClient.invalidateQueries({ queryKey: ['healthStatus'] })
     }, [refetch, queryClient])
     
-    // O onboarding está completo se:
-    // 1. O banco de dados CONFIRMA que está completo (fonte da verdade quando disponível)
-    // 2. OU o localStorage diz que está completo (fallback para erros de rede)
-    // 3. OU houve erro na API (assume completo para não incomodar)
-    const isCompleted = 
-        dbStatus?.onboardingCompleted === true || 
-        localCompleted === true ||
-        isError
-    
-    // Está carregando apenas se não tiver fallback local
-    const isLoadingStatus = isLoading && localCompleted === null
+    // LÓGICA SIMPLES:
+    // 1. Banco diz TRUE → completo
+    // 2. API falhou → assume completo (não incomoda)
+    // 3. Banco diz FALSE → não completo
+    const isCompleted = dbStatus?.onboardingCompleted === true || isError
     
     return {
-        /** Se o onboarding foi completado (DB || localStorage || erro) */
+        /** Se o onboarding foi completado (DB = true OU erro na API) */
         isCompleted,
         /** Se ainda está carregando o status inicial */
-        isLoading: isLoadingStatus,
+        isLoading,
         /** Se houve erro ao buscar do banco */
         isError,
         /** Se o token permanente foi confirmado */
