@@ -20,25 +20,38 @@ export async function POST(request: NextRequest) {
       templatesData = [body]
     }
 
-    // 2. Validação Inicial (Zod) e Processamento
-    const results = []
-    const errors = []
-
-    for (const temp of templatesData) {
+    // 2. Validação Inicial (Zod) e Processamento em PARALELO
+    // Rate limit da Meta: 200 calls/hora - paralelização é segura para batches típicos (5-20 templates)
+    const promises = templatesData.map(async (temp) => {
       try {
         // Valida estrutura
         const parsed = CreateTemplateSchema.parse(temp)
 
         // Chama Serviço ("A Fábrica")
         const result = await templateService.create(parsed)
-        results.push(result)
+        return { success: true as const, result, name: temp.name }
 
       } catch (err: any) {
         console.error(`[CREATE] Erro ao criar template ${temp.name || 'desconhecido'}:`, err)
-        errors.push({
-          name: temp.name,
-          error: err.message || 'Erro desconhecido'
-        })
+        return { success: false as const, name: temp.name, error: err.message || 'Erro desconhecido' }
+      }
+    })
+
+    const outcomes = await Promise.allSettled(promises)
+
+    const results: any[] = []
+    const errors: { name: string; error: string }[] = []
+
+    for (const outcome of outcomes) {
+      if (outcome.status === 'fulfilled') {
+        if (outcome.value.success) {
+          results.push(outcome.value.result)
+        } else {
+          errors.push({ name: outcome.value.name, error: outcome.value.error })
+        }
+      } else {
+        // Promise rejeitada (não deveria acontecer com try/catch interno, mas por segurança)
+        errors.push({ name: 'unknown', error: outcome.reason?.message || 'Erro inesperado' })
       }
     }
 

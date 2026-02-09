@@ -97,7 +97,7 @@ const THEME_CSS = `
     --geist-background-secondary: #111111;
     --geist-foreground: #ededed;
     --geist-foreground-secondary: #a1a1a1;
-    --geist-foreground-tertiary: #707070;
+    --geist-foreground-tertiary: #888888;
     --geist-border: #333333;
     --geist-border-hover: #444444;
     --geist-component-bg: #1a1a1a;

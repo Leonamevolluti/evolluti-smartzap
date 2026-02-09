@@ -33,6 +33,7 @@ import { getWhatsAppCredentials } from '@/lib/whatsapp-credentials'
 import { applyFlowMappingToContact } from '@/lib/flow-mapping'
 import { settingsDb } from '@/lib/supabase-db'
 import { ensureWorkflowRecord, getCompanyId } from '@/lib/builder/workflow-db'
+import { Client as WorkflowClient } from '@upstash/workflow'
 import { getPendingConversation } from '@/lib/builder/workflow-conversations'
 
 // T046-T048: Inbox integration
@@ -179,19 +180,9 @@ async function markContactOptOutAndSuppress(input: {
   metadata?: Record<string, unknown>
 }): Promise<void> {
   const phone = normalizePhoneNumber(input.phoneRaw)
-  const now = new Date().toISOString()
 
-  // Best-effort: atualiza contatos (se existir)
-  try {
-    await supabase
-      .from('contacts')
-      .update({ status: 'Opt-out', updated_at: now })
-      .eq('phone', phone)
-  } catch (e) {
-    console.warn('[Webhook] Falha ao atualizar contacts.status para Opt-out (best-effort):', e)
-  }
-
-  // Fonte da verdade para supressão global
+  // Apenas registra na tabela de supressões (fonte de verdade para bloqueios automáticos)
+  // NÃO atualiza contacts.status - esse campo é controlado manualmente pelo usuário
   try {
     await upsertPhoneSuppression({
       phone,
@@ -572,11 +563,23 @@ export async function POST(request: NextRequest) {
     entryCount: Array.isArray(body?.entry) ? body.entry.length : 0,
   }))
 
+  // OTIMIZAÇÃO V2: Paraleliza busca de defaultWorkflowId + keywordWorkflows
+  // Antes: 2 queries sequenciais (~200ms cada)
+  // Depois: 1 batch paralelo (~200ms total)
+  const [defaultWorkflowIdFromDb, allKeywordWorkflows] = await Promise.all([
+    settingsDb.get('workflow_builder_default_id'),
+    loadKeywordWorkflows(null), // Carrega todos, filtra depois
+  ])
+
   const defaultWorkflowId =
-    (await settingsDb.get('workflow_builder_default_id')) ||
+    defaultWorkflowIdFromDb ||
     process.env.WORKFLOW_BUILDER_DEFAULT_ID ||
     null
-  const keywordWorkflows = await loadKeywordWorkflows(defaultWorkflowId)
+
+  // Filtra o workflow padrão (se existir) para evitar execução duplicada
+  const keywordWorkflows = defaultWorkflowId
+    ? allKeywordWorkflows.filter((w) => w.workflowId !== defaultWorkflowId)
+    : allKeywordWorkflows
 
   try {
     const entries = body.entry || []
@@ -1005,14 +1008,28 @@ export async function POST(request: NextRequest) {
               const companyId = await getCompanyId(supabaseAdmin)
               await ensureWorkflowRecord(supabaseAdmin, targetWorkflowId, companyId)
 
-              const origin = request.nextUrl.origin
-              await fetch(`${origin}/api/builder/workflow/${targetWorkflowId}/execute`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+              // Usa QStash Client para ter assinatura válida (evita SignatureError)
+              const baseUrl = process.env.NEXT_PUBLIC_APP_URL
+                || (process.env.VERCEL_PROJECT_PRODUCTION_URL && `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`)
+                || (process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}`)
+                || request.nextUrl.origin
+
+              const workflowClient = new WorkflowClient({ token: process.env.QSTASH_TOKEN! })
+
+              // Headers para bypass de proteção Vercel se necessário
+              const headers: Record<string, string> = {}
+              const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+              if (bypassSecret) {
+                headers['x-vercel-protection-bypass'] = bypassSecret
+              }
+
+              await workflowClient.trigger({
+                url: `${baseUrl}/api/builder/workflow/${targetWorkflowId}/execute`,
+                body: {
                   workflowId: targetWorkflowId,
                   input: { from, to: from, message: text },
-                }),
+                },
+                headers: Object.keys(headers).length > 0 ? headers : undefined,
               })
             } catch (e) {
               console.error('[Webhook] Failed to trigger builder workflow:', e)

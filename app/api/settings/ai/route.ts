@@ -5,15 +5,17 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { generateText } from 'ai'
 import { clearSettingsCache } from '@/lib/ai'
-import { DEFAULT_AI_FALLBACK, DEFAULT_AI_PROMPTS, DEFAULT_AI_ROUTES } from '@/lib/ai/ai-center-defaults'
+import { DEFAULT_AI_FALLBACK, DEFAULT_AI_GATEWAY, DEFAULT_AI_PROMPTS, DEFAULT_AI_ROUTES } from '@/lib/ai/ai-center-defaults'
 import { DEFAULT_MODEL_ID } from '@/lib/ai/model'
 import { DEFAULT_OCR_MODEL } from '@/lib/ai/ocr/providers/gemini'
 import {
   clearAiCenterCache,
   getAiFallbackConfig,
+  getAiGatewayConfig,
   getAiPromptsConfig,
   getAiRoutesConfig,
   prepareAiFallbackUpdate,
+  prepareAiGatewayUpdate,
   prepareAiPromptsUpdate,
   prepareAiRoutesUpdate,
 } from '@/lib/ai/ai-center-config'
@@ -156,6 +158,7 @@ export async function GET() {
                 'ai_model',
                 'ai_routes',
                 'ai_fallback',
+                'ai_gateway',
                 'ai_prompts',
                 'ocr_provider',
                 'ocr_gemini_model',
@@ -204,6 +207,9 @@ export async function GET() {
         const fallback = prepareAiFallbackUpdate(
             parseJsonSetting(settingsMap.get('ai_fallback') as string | null, DEFAULT_AI_FALLBACK)
         )
+        const gateway = prepareAiGatewayUpdate(
+            parseJsonSetting(settingsMap.get('ai_gateway') as string | null, DEFAULT_AI_GATEWAY)
+        )
 
         // Prompts base do JSON ai_prompts
         const basePrompts = parseJsonSetting(settingsMap.get('ai_prompts') as string | null, {})
@@ -250,6 +256,7 @@ export async function GET() {
             tokenPreview: providerPreviews[savedProvider as keyof typeof providerPreviews],
             routes,
             fallback,
+            gateway,
             prompts,
             // OCR configuration
             ocr: {
@@ -281,6 +288,7 @@ export async function POST(request: NextRequest) {
             model,
             routes,
             fallback,
+            gateway,
             prompts,
             // OCR fields
             ocr_provider,
@@ -289,7 +297,7 @@ export async function POST(request: NextRequest) {
         } = body
 
         // At least one field must be provided
-        if (!apiKey && !provider && !model && !routes && !fallback && !prompts && !ocr_provider && !ocr_gemini_model && !mistral_api_key) {
+        if (!apiKey && !provider && !model && !routes && !fallback && !gateway && !prompts && !ocr_provider && !ocr_gemini_model && !mistral_api_key) {
             return NextResponse.json(
                 { error: 'At least one field is required' },
                 { status: 400 }
@@ -351,6 +359,16 @@ export async function POST(request: NextRequest) {
             updates.push({
                 key: 'ai_fallback',
                 value: JSON.stringify(normalizedFallback),
+                updated_at: now,
+            })
+        }
+
+        if (gateway) {
+            const currentGateway = await getAiGatewayConfig()
+            const normalizedGateway = prepareAiGatewayUpdate({ ...currentGateway, ...gateway })
+            updates.push({
+                key: 'ai_gateway',
+                value: JSON.stringify(normalizedGateway),
                 updated_at: now,
             })
         }

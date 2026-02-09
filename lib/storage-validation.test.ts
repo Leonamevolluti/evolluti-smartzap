@@ -212,14 +212,14 @@ describe('TemplateButtonSchema', () => {
     expect(TemplateButtonSchema.safeParse(button).success).toBe(true)
   })
 
-  it('accepts button with payload as string', () => {
+  it('rejects unsupported button type POSTBACK', () => {
     const button = { type: 'POSTBACK', text: 'Click', payload: 'my-payload' }
-    expect(TemplateButtonSchema.safeParse(button).success).toBe(true)
+    expect(TemplateButtonSchema.safeParse(button).success).toBe(false)
   })
 
-  it('accepts button with payload as object', () => {
-    const button = { type: 'POSTBACK', text: 'Click', payload: { action: 'subscribe' } }
-    expect(TemplateButtonSchema.safeParse(button).success).toBe(true)
+  it('rejects unsupported button type CATALOG', () => {
+    const button = { type: 'CATALOG', text: 'Ver catálogo' }
+    expect(TemplateButtonSchema.safeParse(button).success).toBe(false)
   })
 
   it('rejects invalid button type', () => {

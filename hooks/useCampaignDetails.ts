@@ -13,6 +13,8 @@ import {
   calculateRealStats,
 } from '@/lib/business/campaign';
 
+const isDev = process.env.NODE_ENV === 'development';
+
 export const useCampaignDetailsController = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -47,7 +49,6 @@ export const useCampaignDetailsController = () => {
   useEffect(() => {
     if (id && !id.startsWith('temp_') && !warmupStartRef.current[id]) {
       warmupStartRef.current[id] = Date.now()
-      console.log('[CampaignDetails] Warmup iniciado para ID:', id)
     }
   }, [id])
 
@@ -55,9 +56,7 @@ export const useCampaignDetailsController = () => {
   const campaignQuery = useQuery<Campaign | undefined>({
     queryKey: ['campaign', id],
     queryFn: async () => {
-      console.log('[CampaignDetails] Fetching campaign:', id)
       const result = await campaignService.getById(id!)
-      console.log('[CampaignDetails] Campaign fetched - status:', result?.status)
       return result
     },
     enabled: !!id && !id.startsWith('temp_'),
@@ -85,14 +84,10 @@ export const useCampaignDetailsController = () => {
       // Se está em DRAFT e no warmup, faz polling
       // Quando mudar para SENDING/COMPLETED, Realtime assume
       if (inWarmup && campaign?.status === CampaignStatus.DRAFT) {
-        console.log('[CampaignDetails] Warmup polling ativo - elapsed:', elapsed, 'ms')
         return WARMUP_INTERVAL_MS
       }
 
       // Fora do warmup ou não é DRAFT - para o polling
-      if (elapsed >= WARMUP_DURATION_MS) {
-        console.log('[CampaignDetails] Warmup expirou para:', campaignId)
-      }
       return false
     },
     select: (fresh) => {

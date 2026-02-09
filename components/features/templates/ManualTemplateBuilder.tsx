@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { flowsService } from '@/services/flowsService'
 import { templateService } from '@/services/templateService'
+import { validateVideoCodecs, getCodecErrorMessage } from '@/lib/video-codec-validator'
 
 // Extracted components
 import { TemplatePreview } from './builder/TemplatePreview'
@@ -54,12 +55,16 @@ export function ManualTemplateBuilder({
   onSpecChange,
   onFinish,
   isFinishing,
+  onSaveDraft,
+  isSaving,
 }: {
   id: string
   initialSpec: unknown
   onSpecChange: (spec: unknown) => void
   onFinish?: () => void
   isFinishing?: boolean
+  onSaveDraft?: () => void
+  isSaving?: boolean
 }) {
   // ============================================================================
   // State
@@ -98,6 +103,18 @@ export function ManualTemplateBuilder({
     queryFn: flowsService.list,
     staleTime: 10_000,
   })
+
+  // Verifica se Meta App ID está configurado (necessário para upload de mídia)
+  const metaAppQuery = useQuery({
+    queryKey: ['metaAppConfig'],
+    queryFn: async () => {
+      const res = await fetch('/api/settings/meta-app')
+      if (!res.ok) return { appId: null }
+      return res.json()
+    },
+    staleTime: 60_000,
+  })
+  const hasMetaAppId = !!metaAppQuery.data?.appId
 
   const publishedFlows = React.useMemo(() => {
     const rows = flowsQuery.data || []
@@ -167,11 +184,14 @@ export function ManualTemplateBuilder({
   // ============================================================================
   // Media Upload Functions
   // ============================================================================
+  // Limite máximo do Vercel Serverless é ~4.5MB para request body
+  const VERCEL_SERVERLESS_LIMIT = 4_500_000
+
   const headerMediaMaxBytes = (format: HeaderFormat): number => {
     if (format === 'GIF') return 3_500_000
-    if (format === 'IMAGE') return 5 * 1024 * 1024
-    if (format === 'VIDEO') return 16 * 1024 * 1024
-    if (format === 'DOCUMENT') return 20 * 1024 * 1024
+    if (format === 'IMAGE') return Math.min(5_000_000, VERCEL_SERVERLESS_LIMIT)
+    if (format === 'VIDEO') return VERCEL_SERVERLESS_LIMIT // Meta permite 16MB, mas Vercel limita a 4.5MB
+    if (format === 'DOCUMENT') return VERCEL_SERVERLESS_LIMIT // Meta permite 20MB, mas Vercel limita a 4.5MB
     return 0
   }
 
@@ -195,8 +215,36 @@ export function ManualTemplateBuilder({
     const max = headerMediaMaxBytes(format)
     if (max > 0 && file.size > max) {
       const mb = (max / 1_000_000).toFixed(1)
-      setUploadHeaderMediaError(`Arquivo muito grande para ${format}. Limite: ${mb}MB.`)
+      const fileMb = (file.size / 1_000_000).toFixed(1)
+      const isPlatformLimit = max === VERCEL_SERVERLESS_LIMIT
+      setUploadHeaderMediaError(
+        isPlatformLimit
+          ? `Arquivo muito grande (${fileMb}MB). Limite da plataforma: ${mb}MB. Comprima o ${format === 'VIDEO' ? 'vídeo' : 'arquivo'} antes de enviar.`
+          : `Arquivo muito grande para ${format}. Limite: ${mb}MB.`
+      )
       return
+    }
+
+    // Validar codecs de vídeo antes do upload (VIDEO e GIF são ambos mp4)
+    if (format === 'VIDEO' || format === 'GIF') {
+      try {
+        const codecResult = await validateVideoCodecs(file)
+
+        if (!codecResult.valid) {
+          const errorMsg = getCodecErrorMessage(codecResult)
+          setUploadHeaderMediaError(errorMsg)
+          toast.error(errorMsg, { duration: 8000 })
+          return
+        }
+
+        // Mostrar warning se houver (ex: vídeo sem áudio)
+        if (codecResult.warning) {
+          toast.warning(codecResult.warning, { duration: 6000 })
+        }
+      } catch (err) {
+        // Em caso de erro na validação, continua com o upload (Meta vai validar)
+        console.warn('Erro ao validar codecs:', err)
+      }
     }
 
     setUploadHeaderMediaError(null)
@@ -333,22 +381,7 @@ export function ManualTemplateBuilder({
   const allowedButtonTypes = new Set<ButtonType>(
     isAuthCategory
       ? ['OTP']
-      : [
-          'QUICK_REPLY',
-          'URL',
-          'PHONE_NUMBER',
-          'COPY_CODE',
-          'FLOW',
-          'VOICE_CALL',
-          'CATALOG',
-          'MPM',
-          'EXTENSION',
-          'ORDER_DETAILS',
-          'POSTBACK',
-          'REMINDER',
-          'SEND_LOCATION',
-          'SPM',
-        ],
+      : ['QUICK_REPLY', 'URL', 'PHONE_NUMBER', 'COPY_CODE', 'FLOW'],
   )
   const counts = {
     total: buttons.length,
@@ -469,15 +502,6 @@ export function ManualTemplateBuilder({
     'PHONE_NUMBER',
     'COPY_CODE',
     'FLOW',
-    'VOICE_CALL',
-    'CATALOG',
-    'MPM',
-    'EXTENSION',
-    'ORDER_DETAILS',
-    'POSTBACK',
-    'REMINDER',
-    'SEND_LOCATION',
-    'SPM',
     'OTP',
   ])
   const missingButtonText = buttons.some((b) => requiresButtonText.has(b?.type) && !String(b?.text || '').trim())
@@ -668,6 +692,7 @@ export function ManualTemplateBuilder({
             namedVarError={namedVarError}
             setNamedVarError={setNamedVarError}
             confirmNamedVariable={confirmNamedVariable}
+            hasMetaAppId={hasMetaAppId}
           />
         )}
 
@@ -710,6 +735,8 @@ export function ManualTemplateBuilder({
           isButtonsValid={isButtonsValid}
           onFinish={onFinish}
           isFinishing={isFinishing}
+          onSaveDraft={onSaveDraft}
+          isSaving={isSaving}
           showDebug={showDebug}
           setShowDebug={setShowDebug}
           isHeaderFormatValid={isHeaderFormatValid}

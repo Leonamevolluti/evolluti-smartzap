@@ -47,6 +47,9 @@ const respondToolSchema = z.object({
   shouldHandoff: z
     .boolean()
     .describe('Se deve transferir para um atendente humano'),
+  isUrgent: z
+    .boolean()
+    .describe('Se a transferência é URGENTE (cliente frustrado, emergência). False = transferência normal'),
   handoffReason: z
     .string()
     .optional()
@@ -89,7 +92,6 @@ INSTRUÇÕES IMPORTANTES:
 2. Seja educado, profissional e empático
 3. Se não souber a resposta, admita e ofereça alternativas
 4. Detecte o sentimento do cliente (positivo, neutro, negativo, frustrado)
-5. Se o cliente estiver frustrado ou pedir para falar com humano, defina shouldHandoff como true
 
 CRITÉRIOS PARA TRANSFERÊNCIA (shouldHandoff = true):
 - Cliente explicitamente pede para falar com atendente/humano
@@ -97,6 +99,16 @@ CRITÉRIOS PARA TRANSFERÊNCIA (shouldHandoff = true):
 - Assunto sensível (reclamação formal, problema financeiro, dados pessoais)
 - Você não consegue ajudar após 2 tentativas
 - Detecção de urgência real (emergência, prazo crítico)
+
+QUANDO MARCAR COMO URGENTE (isUrgent = true):
+- Cliente está FRUSTRADO ou IRRITADO (sentimento negativo forte)
+- Emergência real (prazo crítico, problema grave)
+- Cliente já reclamou várias vezes
+
+QUANDO NÃO É URGENTE (isUrgent = false):
+- Cliente pediu educadamente para falar com humano
+- Assunto sensível mas cliente está calmo
+- Transferência preventiva (você não sabe ajudar)
 
 IMPORTANTE: Você DEVE usar a ferramenta "respond" para enviar sua resposta.`
 }
@@ -124,6 +136,7 @@ async function persistAILog(params: {
           sentiment: params.output.sentiment,
           confidence: params.output.confidence,
           shouldHandoff: params.output.shouldHandoff,
+          isUrgent: params.output.isUrgent,
           handoffReason: params.output.handoffReason,
         },
       })
@@ -248,14 +261,29 @@ export async function POST(req: Request) {
             // Handle handoff if needed
             if (params.shouldHandoff) {
               const supabase = await createClient()
-              await supabase
-                .from('inbox_conversations')
-                .update({
-                  mode: 'human',
-                  priority: 'high',
-                  handoff_summary: params.handoffSummary || params.handoffReason,
-                })
-                .eq('id', conversationId)
+
+              if (params.isUrgent) {
+                // URGENTE: mantém no bot, marca como urgente
+                // Aparece com badge vermelho na fila até atendente assumir
+                await supabase
+                  .from('inbox_conversations')
+                  .update({
+                    priority: 'urgent',
+                    handoff_summary: params.handoffSummary || params.handoffReason,
+                  })
+                  .eq('id', conversationId)
+              } else {
+                // Normal: transfere direto para humano
+                // Vai para fila normal de atendimento
+                await supabase
+                  .from('inbox_conversations')
+                  .update({
+                    mode: 'human',
+                    priority: 'normal',
+                    handoff_summary: params.handoffSummary || params.handoffReason,
+                  })
+                  .eq('id', conversationId)
+              }
             }
 
             // Return the structured response

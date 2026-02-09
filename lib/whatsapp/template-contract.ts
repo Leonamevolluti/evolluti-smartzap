@@ -14,6 +14,12 @@ export type SkipCode =
 export type TemplateVariablesPositional = {
   header?: string[]
   headerMediaId?: string
+  headerLocation?: {
+    latitude: string
+    longitude: string
+    name: string
+    address: string
+  }
   body: string[]
   buttons?: Record<string, string>
 }
@@ -21,6 +27,12 @@ export type TemplateVariablesPositional = {
 export type TemplateVariablesNamed = {
   header?: Record<string, string>
   headerMediaId?: string
+  headerLocation?: {
+    latitude: string
+    longitude: string
+    name: string
+    address: string
+  }
   body: Record<string, string>
   buttons?: Record<string, string>
 }
@@ -73,6 +85,12 @@ export interface ContactLike {
 export interface ResolvedTemplateValues {
   header?: Array<{ key: string; text: string }>
   headerMediaId?: string
+  headerLocation?: {
+    latitude: string
+    longitude: string
+    name: string
+    address: string
+  }
   body: Array<{ key: string; text: string }>
   buttons?: Array<{ index: number; params: Array<{ key: string; text: string }> }>
 }
@@ -400,6 +418,17 @@ export function precheckContactForTemplate(
     }
     if (buttonValues.length) values.buttons = buttonValues
     if (headerMediaId && headerMediaId.trim()) values.headerMediaId = headerMediaId.trim()
+
+    // LOCATION header
+    const headerLocation = (rawTemplateVariables as any)?.headerLocation
+    if (headerLocation?.latitude && headerLocation?.longitude) {
+      values.headerLocation = {
+        latitude: String(headerLocation.latitude),
+        longitude: String(headerLocation.longitude),
+        name: String(headerLocation.name || ''),
+        address: String(headerLocation.address || ''),
+      }
+    }
   } else {
     // named
     const headerMap = normalizeNamedMap((rawTemplateVariables as any)?.header)
@@ -425,6 +454,17 @@ export function precheckContactForTemplate(
 
     // buttons dynamic is forbidden for named, so nothing to resolve
     if (headerMediaId && headerMediaId.trim()) values.headerMediaId = headerMediaId.trim()
+
+    // LOCATION header
+    const headerLocation = (rawTemplateVariables as any)?.headerLocation
+    if (headerLocation?.latitude && headerLocation?.longitude) {
+      values.headerLocation = {
+        latitude: String(headerLocation.latitude),
+        longitude: String(headerLocation.longitude),
+        name: String(headerLocation.name || ''),
+        address: String(headerLocation.address || ''),
+      }
+    }
   }
 
   const missingDetails: MissingParamDetail[] = requiredParams
@@ -489,25 +529,8 @@ function mapButtonSubType(buttonType?: TemplateButton['type']): string | null {
       return 'otp'
     case 'FLOW':
       return 'flow'
-    case 'CATALOG':
-      return 'catalog'
-    case 'MPM':
-      return 'mpm'
-    case 'VOICE_CALL':
-      return 'voice_call'
-    case 'ORDER_DETAILS':
-      return 'order_details'
-    case 'SPM':
-      return 'spm'
-    case 'SEND_LOCATION':
-      return 'send_location'
-    case 'REMINDER':
-      return 'reminder'
-    case 'POSTBACK':
-      return 'postback'
-    case 'EXTENSION':
-      return 'extension'
     default:
+      // Tipos não suportados pela Meta API para templates
       return null
   }
 }
@@ -553,6 +576,7 @@ export function buildMetaTemplatePayload(input: {
   ) as any | undefined
   const headerFormat = headerComponent?.format ? String(headerComponent.format).toUpperCase() : undefined
   const headerIsMedia = headerFormat && ['IMAGE', 'VIDEO', 'DOCUMENT', 'GIF'].includes(headerFormat)
+  const headerIsLocation = headerFormat === 'LOCATION'
 
   const extractHeaderExampleLink = (): string | undefined => {
     const example = headerComponent?.example
@@ -589,7 +613,11 @@ export function buildMetaTemplatePayload(input: {
       )
     }
 
-    const mediaParamType = headerFormat === 'IMAGE' ? 'image' : headerFormat === 'DOCUMENT' ? 'document' : 'video'
+    const mediaParamType =
+      headerFormat === 'IMAGE' ? 'image' :
+      headerFormat === 'DOCUMENT' ? 'document' :
+      headerFormat === 'GIF' ? 'gif' :
+      'video'
     const mediaKey = mediaParamType
     payload.template.components.push({
       type: 'header',
@@ -607,8 +635,53 @@ export function buildMetaTemplatePayload(input: {
     })
   }
 
-  // HEADER de texto (apenas se o template NÃO for header de mídia)
-  if (!headerIsMedia && values.header?.length) {
+  // HEADER de localização
+  if (headerIsLocation) {
+    // Primeiro tenta usar os dados passados em values.headerLocation
+    // Se não existir, tenta extrair do componente HEADER do template (dados pré-configurados)
+    let loc = values.headerLocation
+    if (!loc?.latitude || !loc?.longitude) {
+      // Tenta extrair do template (dados salvos no builder)
+      const templateLocation = (headerComponent as any)?.location
+      if (templateLocation?.latitude && templateLocation?.longitude) {
+        loc = {
+          latitude: String(templateLocation.latitude),
+          longitude: String(templateLocation.longitude),
+          name: String(templateLocation.name || ''),
+          address: String(templateLocation.address || ''),
+        }
+      }
+    }
+
+    if (!loc?.latitude || !loc?.longitude) {
+      throw new Error(
+        `Template "${templateName}" possui HEADER LOCATION, mas não há dados de localização configurados. ` +
+          'Configure latitude, longitude, nome e endereço no template antes de enviar.'
+      )
+    }
+
+    // Meta exige que 'address' seja preenchido. Usa 'name' como fallback se address estiver vazio.
+    const locationName = String(loc.name || '').trim()
+    const locationAddress = String(loc.address || '').trim() || locationName || 'Localização'
+
+    payload.template.components.push({
+      type: 'header',
+      parameters: [
+        {
+          type: 'location',
+          location: {
+            latitude: loc.latitude,
+            longitude: loc.longitude,
+            name: locationName || locationAddress,
+            address: locationAddress,
+          },
+        },
+      ],
+    })
+  }
+
+  // HEADER de texto (apenas se o template NÃO for header de mídia ou location)
+  if (!headerIsMedia && !headerIsLocation && values.header?.length) {
     payload.template.components.push({
       type: 'header',
       parameters: values.header.map((p) =>
@@ -648,6 +721,12 @@ export function buildMetaTemplatePayload(input: {
       }
 
       if (subType === 'url') {
+        // Botões de URL estáticos (sem {{1}} na URL) não devem ter componente no payload
+        // A Meta retorna erro 132018 se enviarmos componente para botão estático
+        const isDynamic = buttonUrlHasAnyPlaceholder(entry.button.url)
+        if (!isDynamic) {
+          continue // Skip - botão estático não precisa de componente
+        }
         if (params.length) {
           component.parameters = params.map((p) => ({ type: 'text', text: p.text }))
         }
@@ -703,4 +782,136 @@ export function buildMetaTemplatePayload(input: {
   }
 
   return payload
+}
+
+/**
+ * Renderiza template como texto legível para exibição no inbox.
+ * Usado para dar contexto à IA e ao operador sobre o que foi enviado.
+ *
+ * Formato de saída:
+ * ```
+ * 📋 *Template: nome_do_template*
+ *
+ * [Header se houver]
+ *
+ * Corpo do template com {{variáveis}} substituídas
+ *
+ * _Rodapé se houver_
+ *
+ * ---
+ * [Botão 1]
+ * [Botão 2]
+ * ```
+ */
+export function renderTemplatePreviewText(
+  template: Template,
+  resolvedValues: ResolvedTemplateValues
+): string {
+  const components: TemplateComponent[] =
+    (template.components as TemplateComponent[]) ||
+    (template.content as unknown as TemplateComponent[]) ||
+    []
+
+  const lines: string[] = []
+
+  // Header com nome do template
+  lines.push(`📋 *Template: ${template.name}*`)
+  lines.push('')
+
+  // HEADER component
+  const headerComponent = components.find((c) => c.type === 'HEADER')
+  if (headerComponent) {
+    if (headerComponent.format === 'TEXT' && headerComponent.text) {
+      // Header de texto - substituir variáveis
+      let headerText = headerComponent.text
+      if (resolvedValues.header?.length) {
+        headerText = replaceTemplateVariables(headerText, resolvedValues.header)
+      }
+      lines.push(`*${headerText}*`)
+      lines.push('')
+    } else if (headerComponent.format === 'IMAGE') {
+      lines.push('[🖼️ Imagem]')
+      lines.push('')
+    } else if (headerComponent.format === 'VIDEO') {
+      lines.push('[🎬 Vídeo]')
+      lines.push('')
+    } else if (headerComponent.format === 'DOCUMENT') {
+      lines.push('[📄 Documento]')
+      lines.push('')
+    } else if (headerComponent.format === 'LOCATION') {
+      const loc = resolvedValues.headerLocation
+      if (loc?.name || loc?.address) {
+        lines.push(`[📍 ${loc.name || loc.address}]`)
+      } else {
+        lines.push('[📍 Localização]')
+      }
+      lines.push('')
+    }
+  }
+
+  // BODY component
+  const bodyComponent = components.find((c) => c.type === 'BODY')
+  if (bodyComponent?.text) {
+    let bodyText = bodyComponent.text
+    if (resolvedValues.body?.length) {
+      bodyText = replaceTemplateVariables(bodyText, resolvedValues.body)
+    }
+    lines.push(bodyText)
+    lines.push('')
+  }
+
+  // FOOTER component
+  const footerComponent = components.find((c) => c.type === 'FOOTER')
+  if (footerComponent?.text) {
+    lines.push(`_${footerComponent.text}_`)
+    lines.push('')
+  }
+
+  // BUTTONS components
+  const buttonsComponents = components.filter((c) => c.type === 'BUTTONS')
+  const allButtons: TemplateButton[] = []
+  for (const bc of buttonsComponents) {
+    if (bc.buttons) {
+      allButtons.push(...bc.buttons)
+    }
+  }
+
+  if (allButtons.length > 0) {
+    lines.push('---')
+    for (const btn of allButtons) {
+      if (btn.type === 'URL') {
+        lines.push(`[🔗 ${btn.text}]`)
+      } else if (btn.type === 'PHONE_NUMBER') {
+        lines.push(`[📞 ${btn.text}]`)
+      } else if (btn.type === 'QUICK_REPLY') {
+        lines.push(`[💬 ${btn.text}]`)
+      } else if (btn.type === 'COPY_CODE') {
+        lines.push(`[📋 ${btn.text}]`)
+      } else if (btn.type === 'FLOW') {
+        lines.push(`[📝 ${btn.text}]`)
+      } else {
+        lines.push(`[${btn.text}]`)
+      }
+    }
+  }
+
+  return lines.join('\n').trim()
+}
+
+/**
+ * Substitui variáveis posicionais ({{1}}, {{2}}) ou nomeadas ({{nome}}) no texto.
+ */
+function replaceTemplateVariables(
+  text: string,
+  values: Array<{ key: string; text: string }>
+): string {
+  let result = text
+
+  for (const v of values) {
+    // Substitui tanto {{1}} quanto {{nome}} dependendo do formato
+    const positionalRegex = new RegExp(`\\{\\{${v.key}\\}\\}`, 'g')
+    result = result.replace(positionalRegex, v.text)
+  }
+
+  return result
 }

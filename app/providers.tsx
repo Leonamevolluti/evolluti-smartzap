@@ -2,7 +2,6 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
-import { RealtimeProvider } from '@/components/providers/RealtimeProvider'
 import { CentralizedRealtimeProvider } from '@/components/providers/CentralizedRealtimeProvider'
 import { DevModeProvider } from '@/components/providers/DevModeProvider'
 import { PWAProvider } from '@/components/pwa'
@@ -35,13 +34,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
     >
       <QueryClientProvider client={queryClient}>
         <DevModeProvider>
-          <RealtimeProvider>
-            <CentralizedRealtimeProvider>
-              <PWAProvider>
-                {children}
-              </PWAProvider>
-            </CentralizedRealtimeProvider>
-          </RealtimeProvider>
+          <CentralizedRealtimeProvider>
+            <PWAProvider>
+              {children}
+            </PWAProvider>
+          </CentralizedRealtimeProvider>
         </DevModeProvider>
       </QueryClientProvider>
     </ThemeProvider>

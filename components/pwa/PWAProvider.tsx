@@ -74,12 +74,12 @@ export function PWAProvider({ children }: PWAProviderProps) {
     }
   }, [sw.isInstallable, installDismissed, isMobile])
 
-  // Mostrar banner de atualização imediatamente
-  useEffect(() => {
-    if (sw.updateAvailable) {
-      setShowUpdateBanner(true)
-    }
-  }, [sw.updateAvailable])
+  // Update banner desabilitado - causava falsos positivos em primeira instalação
+  // useEffect(() => {
+  //   if (sw.updateAvailable) {
+  //     setShowUpdateBanner(true)
+  //   }
+  // }, [sw.updateAvailable])
 
   // Actions
   const install = async () => {

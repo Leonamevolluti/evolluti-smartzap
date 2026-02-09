@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { AccountAlert } from '@/app/api/account/alerts/route'
 import { getSupabaseBrowser } from '@/lib/supabase'
@@ -105,6 +105,7 @@ export function useAccountAlerts() {
       .subscribe()
 
     return () => {
+      void channel.unsubscribe()
       supabaseClient.removeChannel(channel)
     }
   }, [queryClient])
@@ -134,15 +135,17 @@ export function useAccountAlerts() {
 
   const alerts = data?.alerts || []
 
-  // Group alerts by type for UI organization
-  const paymentAlerts = alerts.filter(a => a.type === 'payment')
-  const authAlerts = alerts.filter(a => a.type === 'auth')
-  const templateAlerts = alerts.filter(a => a.type === 'template')
-  const systemAlerts = alerts.filter(a => a.type === 'system')
-  const rateLimitAlerts = alerts.filter(a => a.type === 'rate_limit')
+  // Group alerts by type for UI organization (memoized to avoid recalculating on every render)
+  const { paymentAlerts, authAlerts, templateAlerts, systemAlerts, rateLimitAlerts } = useMemo(() => ({
+    paymentAlerts: alerts.filter(a => a.type === 'payment'),
+    authAlerts: alerts.filter(a => a.type === 'auth'),
+    templateAlerts: alerts.filter(a => a.type === 'template'),
+    systemAlerts: alerts.filter(a => a.type === 'system'),
+    rateLimitAlerts: alerts.filter(a => a.type === 'rate_limit'),
+  }), [alerts])
 
-  // Get most critical alert for banner display
-  const criticalAlert = paymentAlerts[0] || authAlerts[0] || null
+  // Get most critical alert for banner display (memoized)
+  const criticalAlert = useMemo(() => paymentAlerts[0] || authAlerts[0] || null, [paymentAlerts, authAlerts])
 
   return {
     // All alerts

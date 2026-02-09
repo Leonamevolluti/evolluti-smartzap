@@ -6,14 +6,25 @@
  *
  * O Vercel AI SDK garante que tools funcionam de forma idêntica em todos os providers.
  *
- * Suporta Helicone como proxy para observability (configurável via settings).
+ * Suporta:
+ * - Vercel AI Gateway: Roteamento inteligente com fallbacks automáticos
+ * - Helicone: Proxy para observability (quando Gateway desabilitado)
+ * - Conexão direta: Sem proxy (fallback)
  */
 
 import type { LanguageModel } from 'ai'
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { getAiGatewayConfig } from './ai-center-config'
+import { toGatewayModelId, type AiGatewayConfig } from './ai-center-defaults'
 
 // =============================================================================
-// Helicone Configuration
+// Vercel AI Gateway Configuration
+// =============================================================================
+
+const AI_GATEWAY_BASE_URL = 'https://ai-gateway.vercel.sh/v1'
+
+// =============================================================================
+// Helicone Configuration (usado quando AI Gateway está desabilitado)
 // =============================================================================
 
 // Helicone gateway config por provider
@@ -59,6 +70,56 @@ async function getHeliconeConfig(): Promise<{ apiKey: string } | null> {
     console.error('[provider-factory] Error fetching Helicone config:', error)
     return null
   }
+}
+
+/**
+ * Cria modelo de linguagem via Vercel AI Gateway.
+ *
+ * O Gateway usa autenticação OIDC (não API key manual):
+ * - Em Vercel (prod/preview): token OIDC é injetado automaticamente
+ * - Local com `vercel dev`: token é obtido automaticamente
+ * - Local com `npm run dev`: requer `vercel env pull` (token expira a cada 12h)
+ *
+ * @param gatewayConfig Configuração do Gateway
+ * @param provider Provider original (google, openai, anthropic)
+ * @param modelId ID do modelo (ex: gemini-2.5-flash)
+ * @param allApiKeys Todas as API keys disponíveis (para BYOK com fallbacks)
+ */
+async function createGatewayModel(
+  gatewayConfig: AiGatewayConfig,
+  provider: AIProvider,
+  modelId: string,
+  allApiKeys: Partial<Record<AIProvider, string>>
+): Promise<LanguageModel> {
+  // OIDC token já foi verificado antes de chamar esta função
+  const oidcToken = process.env.VERCEL_OIDC_TOKEN!
+
+  const { createOpenAI } = await import('@ai-sdk/openai')
+
+  const gatewayModelId = toGatewayModelId(provider, modelId)
+
+  // Headers para o Gateway - apenas OIDC
+  // NOTA: BYOK agora é configurado via providerOptions.gateway.byok no generateText,
+  // não mais via headers. Isso permite usar 'only' para forçar BYOK-only (sem fallback para system credentials).
+  const headers: Record<string, string> = {
+    // Token OIDC para autenticação no Gateway
+    Authorization: `Bearer ${oidcToken}`,
+  }
+
+  if (gatewayConfig.useBYOK) {
+    const configuredProviders = Object.keys(allApiKeys).filter(p => allApiKeys[p as AIProvider])
+    console.log(`[provider-factory] BYOK will be configured via providerOptions.gateway for: ${configuredProviders.join(', ')}`)
+  }
+
+  const openai = createOpenAI({
+    apiKey: 'dummy', // Não usado, autenticação é via OIDC
+    baseURL: AI_GATEWAY_BASE_URL,
+    headers,
+  })
+
+  console.log(`[provider-factory] AI Gateway enabled: ${gatewayModelId}`)
+
+  return openai(gatewayModelId)
 }
 
 // =============================================================================
@@ -125,6 +186,51 @@ export async function getProviderApiKey(provider: AIProvider): Promise<string | 
   return process.env[config.envVar] || null
 }
 
+/**
+ * Busca todas as API keys de todos os providers em uma única query.
+ * Usado pelo AI Gateway para habilitar fallbacks entre providers.
+ */
+export async function getAllProviderApiKeys(): Promise<Partial<Record<AIProvider, string>>> {
+  const result: Partial<Record<AIProvider, string>> = {}
+  const allSettingKeys = Object.values(PROVIDER_API_KEY_MAP).map(c => c.settingKey)
+
+  const supabase = getSupabaseAdmin()
+  if (supabase) {
+    const { data } = await supabase
+      .from('settings')
+      .select('key, value')
+      .in('key', allSettingKeys)
+
+    if (data) {
+      // Mapeia setting key de volta para provider
+      const settingToProvider: Record<string, AIProvider> = {
+        gemini_api_key: 'google',
+        openai_api_key: 'openai',
+        anthropic_api_key: 'anthropic',
+      }
+
+      for (const setting of data) {
+        const provider = settingToProvider[setting.key]
+        if (provider && setting.value) {
+          result[provider] = setting.value
+        }
+      }
+    }
+  }
+
+  // Fallback para variáveis de ambiente (para keys não encontradas no DB)
+  for (const [provider, config] of Object.entries(PROVIDER_API_KEY_MAP)) {
+    if (!result[provider as AIProvider]) {
+      const envValue = process.env[config.envVar]
+      if (envValue) {
+        result[provider as AIProvider] = envValue
+      }
+    }
+  }
+
+  return result
+}
+
 // =============================================================================
 // Model Factory
 // =============================================================================
@@ -134,12 +240,62 @@ export async function getProviderApiKey(provider: AIProvider): Promise<string | 
  *
  * Esta função é provider-agnostic - retorna um modelo compatível com
  * generateText/streamText que funciona com tools de forma idêntica.
+ *
+ * Prioridade de routing:
+ * 1. AI Gateway (se habilitado) - roteamento inteligente com fallbacks
+ * 2. Helicone (se habilitado) - observability
+ * 3. Conexão direta - sem proxy
  */
+export interface CreateLanguageModelResult {
+  model: LanguageModel
+  provider: AIProvider
+  apiKey: string
+  gatewayConfig?: AiGatewayConfig
+  /** Todas as API keys configuradas (para BYOK no providerOptions.gateway) */
+  allApiKeys?: Partial<Record<AIProvider, string>>
+  /** Se está usando o AI Gateway (para decidir se passa providerOptions) */
+  usingGateway: boolean
+}
+
 export async function createLanguageModel(
   modelId: string,
   apiKeyOverride?: string
-): Promise<{ model: LanguageModel; provider: AIProvider; apiKey: string }> {
+): Promise<CreateLanguageModelResult> {
   const provider = getProviderFromModel(modelId)
+
+  // Verifica se AI Gateway está habilitado
+  const gatewayConfig = await getAiGatewayConfig()
+
+  // Gateway requer OIDC token (disponível em Vercel ou via `vercel dev`)
+  const oidcToken = process.env.VERCEL_OIDC_TOKEN
+  const canUseGateway = gatewayConfig.enabled && oidcToken
+
+  if (gatewayConfig.enabled && !oidcToken) {
+    console.warn('[provider-factory] Gateway habilitado mas VERCEL_OIDC_TOKEN não encontrado. Usando conexão direta.')
+  }
+
+  if (canUseGateway) {
+    // Busca TODAS as API keys para habilitar fallbacks no Gateway
+    const allApiKeys = await getAllProviderApiKeys()
+    const primaryApiKey = apiKeyOverride || allApiKeys[provider]
+
+    if (!primaryApiKey) {
+      throw new Error(
+        `API key não configurada para ${provider}. Configure em Configurações > IA.`
+      )
+    }
+
+    // Se tiver override, usa ele como chave do provider primário
+    if (apiKeyOverride) {
+      allApiKeys[provider] = apiKeyOverride
+    }
+
+    // Usa AI Gateway para routing inteligente com fallbacks
+    const model = await createGatewayModel(gatewayConfig, provider, modelId, allApiKeys)
+    return { model, provider, apiKey: primaryApiKey, gatewayConfig, allApiKeys, usingGateway: true }
+  }
+
+  // Conexão direta: busca apenas a chave do provider primário
   const apiKey = apiKeyOverride || (await getProviderApiKey(provider))
 
   if (!apiKey) {
@@ -148,6 +304,7 @@ export async function createLanguageModel(
     )
   }
 
+  // Fallback: Helicone ou conexão direta
   let model: LanguageModel
 
   // Fetch Helicone config from database
@@ -217,7 +374,7 @@ export async function createLanguageModel(
       throw new Error(`Provider não suportado: ${provider}`)
   }
 
-  return { model, provider, apiKey }
+  return { model, provider, apiKey, usingGateway: false }
 }
 
 /**

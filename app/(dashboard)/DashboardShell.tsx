@@ -15,17 +15,6 @@ import {
     MessageCircle,
     Sparkles,
     Workflow,
-    HelpCircle,
-    Webhook,
-    Key,
-    BookOpen,
-    CheckSquare,
-    AppWindow,
-    Phone,
-    KeyRound,
-    TestTube,
-    RefreshCw,
-    Send,
 } from 'lucide-react'
 import React from 'react'
 import { HealthStatus } from '@/lib/health-check'
@@ -38,16 +27,9 @@ import { dashboardService } from '@/services/dashboardService'
 import { useUnreadCount } from '@/hooks/useUnreadCount'
 import { PrefetchLink } from '@/components/ui/PrefetchLink'
 import { AccountAlertBanner } from '@/components/ui/AccountAlertBanner'
+import { WebhookAlertBanner } from '@/components/shared/WebhookAlertBanner'
 import { DashboardSidebar, type NavItem } from '@/components/layout/DashboardSidebar'
 import { ThemeToggle } from '@/components/ui/theme-toggle'
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { DevModeToggle } from '@/components/ui/dev-mode-toggle'
 import { useDevMode } from '@/components/providers/DevModeProvider'
 import {
@@ -55,18 +37,17 @@ import {
     OnboardingChecklist,
     ChecklistMiniBadge,
     OnboardingOverlay,
+    TutorialsSheet,
     useOnboardingProgress,
     type OnboardingStep,
 } from '@/components/features/onboarding'
 import {
-    EmptyStateBanner,
     SuccessBanner,
     CredentialsModal,
-    SetupChecklist,
     GuidedTour,
     useGuidedTour,
 } from '@/components/features/setup'
-import { useSetupStatus } from '@/hooks/useSetupStatus'
+import { useOnboardingStatus } from '@/hooks/useOnboardingStatus'
 
 export function DashboardShell({
     children,
@@ -108,10 +89,10 @@ export function DashboardShell({
     // Dev mode for hiding dev-only nav items
     const { isDevMode } = useDevMode()
 
-    // WhatsApp onboarding progress hook (localStorage)
+    // WhatsApp onboarding progress hook (localStorage - apenas estado de UI)
+    // NOTA: A decisão de mostrar o modal vem do banco (isOnboardingCompletedInDb)
     const {
         progress: onboardingProgress,
-        shouldShowOnboardingModal,
         shouldShowChecklist,
         completeOnboarding,
     } = useOnboardingProgress()
@@ -129,20 +110,17 @@ export function DashboardShell({
     const [showGuidedTour, setShowGuidedTour] = useState(false)
     const guidedTour = useGuidedTour()
 
-    // Onboarding status from database (fonte da verdade)
-    const { data: onboardingDbStatus, refetch: refetchOnboardingStatus, isLoading: isOnboardingStatusLoading } = useQuery({
-        queryKey: ['onboardingStatus'],
-        queryFn: async () => {
-            const response = await fetch('/api/settings/onboarding')
-            if (!response.ok) throw new Error('Failed to fetch onboarding status')
-            return response.json() as Promise<{ onboardingCompleted: boolean; permanentTokenConfirmed: boolean }>
-        },
-        staleTime: 5 * 60 * 1000,
-        gcTime: 10 * 60 * 1000,
-    })
-
-    // Onboarding está completo se marcado no banco OU no localStorage
-    const isOnboardingCompletedInDb = onboardingDbStatus?.onboardingCompleted ?? false
+    // Onboarding status - usa hook dedicado com fallback em localStorage
+    // IMPORTANTE: O hook garante que o modal NUNCA aparece se:
+    // 1. O banco já marcou como completo (fonte da verdade)
+    // 2. OU o localStorage tem o flag (fallback para erros de rede)
+    // 3. OU houve erro na API (assume completo para não incomodar)
+    const { 
+        isCompleted: isOnboardingCompletedInDb, 
+        isLoading: isOnboardingStatusLoading,
+        markComplete: markOnboardingCompleteInDb,
+        refetch: refetchOnboardingStatus,
+    } = useOnboardingStatus()
 
     const { data: authStatus } = useQuery({
         queryKey: ['authStatus'],
@@ -233,7 +211,10 @@ export function DashboardShell({
     const { data: healthStatus, refetch: refetchHealth, isFetching: isHealthFetching } = useQuery<HealthStatus>({
         queryKey: ['healthStatus'],
         queryFn: async () => {
-            const response = await fetch('/api/health')
+            // Usa cache-busting para garantir dados frescos após invalidação
+            const response = await fetch('/api/health', {
+                cache: 'no-store', // Bypassa cache HTTP
+            })
             if (!response.ok) {
                 console.warn('[Health] Request failed with status:', response.status)
                 // Não lançar erro - retorna null e mantém dados anteriores via staleTime
@@ -268,14 +249,14 @@ export function DashboardShell({
     // Determina se precisa configurar webhook (WhatsApp conectado mas webhook não)
     const needsWebhookSetup = isWhatsAppConnected && !isWebhookConfigured && healthStatus !== undefined
 
-    // Hook do novo sistema de setup (Dashboard-First)
-    const setupStatus = useSetupStatus(healthStatus ?? null)
 
     // Handler para salvar credenciais (NÃO marca como completo - o usuário ainda precisa configurar webhook)
     const handleSaveCredentials = useCallback(async (credentials: {
         phoneNumberId: string
         businessAccountId: string
         accessToken: string
+        metaAppId: string
+        metaAppSecret?: string
     }) => {
         // Salva as credenciais no servidor
         await settingsService.save({
@@ -288,34 +269,49 @@ export function DashboardShell({
             testContact: undefined,
         })
 
-        // Revalida o health status
+        // Salva Meta App ID e Secret separadamente (se fornecido)
+        if (credentials.metaAppId?.trim()) {
+            try {
+                await settingsService.saveMetaAppConfig({
+                    appId: credentials.metaAppId.trim(),
+                    appSecret: credentials.metaAppSecret?.trim() || '',
+                })
+            } catch (e) {
+                console.warn('Falha ao salvar Meta App config:', e)
+            }
+        }
+
+        // Revalida o health status e queries relacionadas
         refetchHealth()
         queryClient.invalidateQueries({ queryKey: ['settings'] })
+        queryClient.invalidateQueries({ queryKey: ['allSettings'] })
+        queryClient.invalidateQueries({ queryKey: ['account-limits'] })
+
+        // Sincroniza templates automaticamente em background (não bloqueia o usuário)
+        templateService.sync().then((count) => {
+            console.log(`[Onboarding] Templates sincronizados automaticamente: ${count}`)
+            queryClient.invalidateQueries({ queryKey: ['templates'] })
+        }).catch((err) => {
+            // Falha silenciosa - usuário pode sincronizar manualmente depois
+            console.warn('[Onboarding] Falha ao sincronizar templates:', err)
+        })
     }, [refetchHealth, queryClient])
 
     // Handler para marcar onboarding como completo (chamado quando o usuário finaliza TODO o fluxo)
     const handleMarkOnboardingComplete = useCallback(async () => {
         // Marca o onboarding como completo no localStorage (para compatibilidade)
         completeOnboarding()
-
-        // Marca o onboarding como completo no banco de dados (fonte da verdade)
-        try {
-            await fetch('/api/settings/onboarding', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ onboardingCompleted: true }),
-            })
-            refetchOnboardingStatus()
-        } catch (error) {
-            console.error('Erro ao salvar status do onboarding no banco:', error)
-        }
-    }, [completeOnboarding, refetchOnboardingStatus])
+        
+        // Marca no banco + localStorage + invalida queries (tudo pelo hook)
+        await markOnboardingCompleteInDb()
+    }, [completeOnboarding, markOnboardingCompleteInDb])
 
     // Handler para quando credenciais são conectadas com sucesso (novo fluxo Dashboard-First)
     const handleCredentialsSuccess = useCallback(() => {
         setShowSuccessBanner(true)
         refetchHealth()
         queryClient.invalidateQueries({ queryKey: ['settings'] })
+        queryClient.invalidateQueries({ queryKey: ['allSettings'] })
         // Marca onboarding como completo automaticamente no novo fluxo
         handleMarkOnboardingComplete()
         // Inicia tour guiado se for a primeira vez
@@ -553,92 +549,10 @@ export function DashboardShell({
                     <div className="flex items-center gap-3">
                         <ChecklistMiniBadge isOnboardingCompletedInDb={isOnboardingCompletedInDb} />
 
-                        {/* Botão de Ajuda */}
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <button
-                                    className="p-1.5 text-[var(--ds-text-muted)] hover:text-[var(--ds-text-primary)] hover:bg-[var(--ds-bg-subtle)] rounded-lg transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"
-                                    aria-label="Ajuda"
-                                >
-                                    <HelpCircle size={20} />
-                                </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-64">
-                                <DropdownMenuLabel>Tutoriais de Configuração</DropdownMenuLabel>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                    onClick={() => setForceModalStep('requirements')}
-                                    className="cursor-pointer"
-                                >
-                                    <CheckSquare className="mr-2 h-4 w-4" />
-                                    <span className="text-zinc-500 mr-2">1.</span> Requisitos
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                    onClick={() => setForceModalStep('create-app')}
-                                    className="cursor-pointer"
-                                >
-                                    <AppWindow className="mr-2 h-4 w-4" />
-                                    <span className="text-zinc-500 mr-2">2.</span> Criar App Meta
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                    onClick={() => setForceModalStep('add-whatsapp')}
-                                    className="cursor-pointer"
-                                >
-                                    <Phone className="mr-2 h-4 w-4" />
-                                    <span className="text-zinc-500 mr-2">3.</span> Adicionar WhatsApp
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                    onClick={() => setForceModalStep('credentials')}
-                                    className="cursor-pointer"
-                                >
-                                    <KeyRound className="mr-2 h-4 w-4" />
-                                    <span className="text-zinc-500 mr-2">4.</span> Copiar Credenciais
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                    onClick={() => setForceModalStep('test-connection')}
-                                    className="cursor-pointer"
-                                >
-                                    <TestTube className="mr-2 h-4 w-4" />
-                                    <span className="text-zinc-500 mr-2">5.</span> Testar Conexão
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                    onClick={() => setForceModalStep('configure-webhook')}
-                                    className="cursor-pointer"
-                                >
-                                    <Webhook className="mr-2 h-4 w-4" />
-                                    <span className="text-zinc-500 mr-2">6.</span> Configurar Webhook
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                    onClick={() => setForceModalStep('sync-templates')}
-                                    className="cursor-pointer"
-                                >
-                                    <RefreshCw className="mr-2 h-4 w-4" />
-                                    <span className="text-zinc-500 mr-2">7.</span> Sincronizar Templates
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                    onClick={() => setForceModalStep('send-first-message')}
-                                    className="cursor-pointer"
-                                >
-                                    <Send className="mr-2 h-4 w-4" />
-                                    <span className="text-zinc-500 mr-2">8.</span> Enviar Mensagem Teste
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                    onClick={() => setForceModalStep('create-permanent-token')}
-                                    className="cursor-pointer"
-                                >
-                                    <Key className="mr-2 h-4 w-4" />
-                                    <span className="text-zinc-500 mr-2">9.</span> Token Permanente
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                    onClick={() => window.open('https://developers.facebook.com/docs/whatsapp/cloud-api', '_blank')}
-                                    className="cursor-pointer"
-                                >
-                                    <BookOpen className="mr-2 h-4 w-4" />
-                                    Documentação Meta
-                                </DropdownMenuItem>
-                            </DropdownMenuContent>
-                        </DropdownMenu>
+                        {/* Tutoriais de Configuração */}
+                        <TutorialsSheet
+                            onOpenStep={(step) => setForceModalStep(step)}
+                        />
 
                         <ThemeToggle compact />
                         <DevModeToggle />
@@ -693,22 +607,12 @@ export function DashboardShell({
                     />
                 )}
 
+                {/* Webhook Alert Banner - mostra se webhook não configurado */}
+                <WebhookAlertBanner />
+
                 {/* Page Content */}
                 <PageContentShell>
-                    {/* NOVO: EmptyStateBanner - mostra quando WhatsApp não conectado (Dashboard-First) */}
-                    {/* Guard: só mostra após health E onboarding status carregarem para evitar flash */}
-                    {pathname === '/' &&
-                     healthStatus !== undefined &&
-                     !isOnboardingStatusLoading &&
-                     !isWhatsAppConnected &&
-                     isOnboardingCompletedInDb && (
-                        <EmptyStateBanner
-                            onConnect={() => setShowCredentialsModal(true)}
-                            onHelp={() => setForceModalStep('requirements')}
-                        />
-                    )}
-
-                    {/* NOVO: SuccessBanner - mostra após conectar WhatsApp */}
+                    {/* SuccessBanner - mostra após conectar WhatsApp */}
                     {pathname === '/' && showSuccessBanner && isWhatsAppConnected && (
                         <SuccessBanner
                             onSendTest={() => {
@@ -718,32 +622,10 @@ export function DashboardShell({
                         />
                     )}
 
-                    {/* NOVO: SetupChecklist - lateral na homepage quando onboarding completo */}
-                    {/* Guard: só mostra após TODOS os loadings terminarem */}
-                    {pathname === '/' &&
-                     healthStatus !== undefined &&
-                     !isOnboardingStatusLoading &&
-                     !setupStatus.isLoading &&
-                     isOnboardingCompletedInDb &&
-                     isWhatsAppConnected &&
-                     !setupStatus.isAllComplete && (
-                        <div className="mb-6">
-                            <SetupChecklist
-                                isWhatsAppConnected={setupStatus.isWhatsAppConnected}
-                                isWebhookConfigured={setupStatus.isWebhookConfigured}
-                                hasSentFirstMessage={setupStatus.hasSentFirstMessage}
-                                isPermanentTokenConfirmed={setupStatus.isPermanentTokenConfirmed}
-                                onConnectWhatsApp={() => setShowCredentialsModal(true)}
-                                onSendTestMessage={() => router.push('/campaigns/new')}
-                                onConfigureWebhook={() => setForceModalStep('configure-webhook')}
-                                onCreatePermanentToken={() => setForceModalStep('create-permanent-token')}
-                            />
-                        </div>
-                    )}
 
                     {/* Onboarding Checklist LEGADO - mantido para transição */}
                     {/* Mostra se: onboarding completo (banco OU localStorage) E não dismissado E não minimizado E novo checklist não ativo */}
-                    {pathname === '/' && !isOnboardingCompletedInDb && (shouldShowChecklist) && !onboardingProgress.isChecklistMinimized && !onboardingProgress.isChecklistDismissed && healthStatus && (
+                    {pathname === '/' && !isOnboardingCompletedInDb && !isOnboardingStatusLoading && (shouldShowChecklist) && !onboardingProgress.isChecklistMinimized && !onboardingProgress.isChecklistDismissed && healthStatus && (
                         <div className="mb-6">
                             <OnboardingChecklist
                                 healthStatus={healthStatus}

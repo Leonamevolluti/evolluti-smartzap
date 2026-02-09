@@ -98,18 +98,30 @@ export function CentralizedRealtimeProvider({
   }, [])
 
   // Debounced query invalidation helper
-  const debouncedInvalidate = useMemo(
-    () => debounce((queryKey: string[]) => {
-      queryClient.invalidateQueries({ queryKey })
+  // Acumula todas as query keys chamadas dentro da janela de debounce
+  // e invalida todas de uma vez. Resolve o bug onde chamadas sequenciais
+  // (ex: ['campaigns'] seguido de ['campaignStats']) cancelavam as anteriores.
+  const pendingKeysRef = useRef<Set<string>>(new Set())
+  const debouncedFlush = useMemo(
+    () => debounce(() => {
+      const keys = Array.from(pendingKeysRef.current)
+      pendingKeysRef.current.clear()
+      for (const key of keys) {
+        queryClient.invalidateQueries({ queryKey: [key] })
+      }
     }, debounceMs),
     [queryClient, debounceMs]
   )
+  const debouncedInvalidate = useCallback((queryKey: string[]) => {
+    pendingKeysRef.current.add(queryKey[0])
+    debouncedFlush()
+  }, [debouncedFlush])
 
   // Setup realtime channel
   useEffect(() => {
     const supabase = getSupabaseBrowser()
     if (!supabase) {
-      console.warn('[CentralizedRealtime] Supabase client not available')
+      // Supabase não configurado - normal durante setup wizard ou se env vars ausentes
       return
     }
 
@@ -159,24 +171,28 @@ export function CentralizedRealtimeProvider({
     })
 
     // Activate channel
+    let hasLoggedError = false
     channel.subscribe((status) => {
       isConnectedRef.current = status === 'SUBSCRIBED'
       if (status === 'SUBSCRIBED') {
-      } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-        console.warn('[CentralizedRealtime] Channel status:', status)
+        hasLoggedError = false // Reset para logar novamente se reconectar e falhar depois
+      } else if ((status === 'CLOSED' || status === 'CHANNEL_ERROR') && !hasLoggedError) {
+        // Loga apenas uma vez para não poluir o console
+        console.warn('[Realtime] Conexão falhou. Tentando reconectar automaticamente...')
+        hasLoggedError = true
       }
     })
 
     // Cleanup
     return () => {
-      debouncedInvalidate.cancel?.()
+      debouncedFlush.cancel?.()
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current)
         channelRef.current = null
       }
       isConnectedRef.current = false
     }
-  }, [tables.join(','), notifySubscribers, debouncedInvalidate])
+  }, [tables.join(','), notifySubscribers, debouncedInvalidate, debouncedFlush])
 
   // Subscribe function for consumers
   const subscribe = useCallback((table: string, callback: SubscriptionCallback): (() => void) => {

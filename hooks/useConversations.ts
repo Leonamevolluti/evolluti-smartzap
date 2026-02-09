@@ -15,8 +15,8 @@ import type { InboxConversation, ConversationStatus, ConversationMode } from '@/
 import { CACHE, REALTIME } from '@/lib/constants'
 import { getConversationQueryKey } from './useConversation'
 
-// Default timeout: 24 hours (can be overridden by passing timeoutMs to switchMode)
-const DEFAULT_HUMAN_MODE_TIMEOUT_MS = 24 * 60 * 60 * 1000
+// Default timeout: 0 = nunca expira (can be overridden by passing timeoutMs to switchMode)
+const DEFAULT_HUMAN_MODE_TIMEOUT_MS = 0 // 0 = nunca expira
 
 const CONVERSATIONS_KEY = 'inbox-conversations'
 const CONVERSATIONS_LIST_KEY = [CONVERSATIONS_KEY, 'list']

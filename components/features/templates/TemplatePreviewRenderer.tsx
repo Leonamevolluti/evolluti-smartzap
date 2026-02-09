@@ -1,6 +1,6 @@
 import React from 'react';
 import { TemplateComponent, TemplateButton } from '../../../types';
-import { Zap, ExternalLink, Phone, Copy, Image, Video, FileText, MessageCircle } from 'lucide-react';
+import { Zap, ExternalLink, Phone, Copy, Image, Video, FileText, MessageCircle, MapPin } from 'lucide-react';
 
 interface TemplatePreviewRendererProps {
     components?: TemplateComponent[];
@@ -39,6 +39,7 @@ export const TemplatePreviewRenderer: React.FC<TemplatePreviewRendererProps> = (
     const buttons = components.find(c => c.type === 'BUTTONS');
 
     const renderButton = (button: TemplateButton, index: number) => {
+        // Ícones para tipos de botão suportados pela Meta API
         const icons: Record<string, React.ReactNode> = {
             'URL': <ExternalLink size={14} />,
             'PHONE_NUMBER': <Phone size={14} />,
@@ -46,15 +47,6 @@ export const TemplatePreviewRenderer: React.FC<TemplatePreviewRendererProps> = (
             'COPY_CODE': <Copy size={14} />,
             'OTP': <Copy size={14} />,
             'FLOW': <MessageCircle size={14} />,
-            'CATALOG': <MessageCircle size={14} />,
-            'MPM': <MessageCircle size={14} />,
-            'VOICE_CALL': <Phone size={14} />,
-            'EXTENSION': <MessageCircle size={14} />,
-            'ORDER_DETAILS': <MessageCircle size={14} />,
-            'POSTBACK': <MessageCircle size={14} />,
-            'REMINDER': <MessageCircle size={14} />,
-            'SEND_LOCATION': <MessageCircle size={14} />,
-            'SPM': <MessageCircle size={14} />,
         };
 
         return (
@@ -101,6 +93,28 @@ export const TemplatePreviewRenderer: React.FC<TemplatePreviewRendererProps> = (
                         <div className="flex items-center gap-2 text-zinc-400">
                             <FileText size={20} />
                             <span className="text-[12px]">Documento anexado</span>
+                        </div>
+                    </div>
+                );
+            case 'LOCATION':
+                return (
+                    <div className="bg-[#202c33] rounded-lg rounded-tl-none shadow-sm mb-1 overflow-hidden">
+                        <div className="relative h-24 bg-gradient-to-br from-emerald-900/50 to-emerald-800/30">
+                            {/* Grid pattern to simulate map */}
+                            <div className="absolute inset-0 opacity-10" style={{
+                                backgroundImage: 'linear-gradient(#10b981 1px, transparent 1px), linear-gradient(90deg, #10b981 1px, transparent 1px)',
+                                backgroundSize: '20px 20px'
+                            }} />
+                            {/* Pin */}
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <MapPin size={32} className="text-red-500 drop-shadow-lg" fill="currentColor" />
+                            </div>
+                            {/* Label */}
+                            <div className="absolute bottom-2 left-2 right-2">
+                                <div className="bg-zinc-800/80 rounded px-2 py-1 text-[11px] text-zinc-300 text-center truncate">
+                                    {(header as any)?.location?.name || (header as any)?.location?.address || 'Localização'}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 );

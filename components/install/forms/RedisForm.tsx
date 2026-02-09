@@ -19,17 +19,22 @@ export function RedisForm({ data, onComplete, onBack, showBack }: FormProps) {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const autoValidateTimer = useRef<NodeJS.Timeout | null>(null);
+  const validateInFlightRef = useRef(false);
 
   const isValidUrl = restUrl.trim().startsWith('https://') && restUrl.trim().includes('.upstash.io');
   const isValidToken = restToken.trim().length >= VALIDATION.REDIS_TOKEN_MIN_LENGTH && /^[A-Za-z0-9_=-]+$/.test(restToken.trim());
   const canValidate = isValidUrl && isValidToken;
 
   const handleValidate = async () => {
+    if (validateInFlightRef.current) {
+      return;
+    }
     if (!canValidate) {
       setError('Preencha URL e Token válidos');
       return;
     }
 
+    validateInFlightRef.current = true;
     setValidating(true);
     setError(null);
 
@@ -70,6 +75,7 @@ export function RedisForm({ data, onComplete, onBack, showBack }: FormProps) {
       setRestToken('');
     } finally {
       setValidating(false);
+      validateInFlightRef.current = false;
     }
   };
 
@@ -86,7 +92,7 @@ export function RedisForm({ data, onComplete, onBack, showBack }: FormProps) {
       clearTimeout(autoValidateTimer.current);
     }
 
-    if (canValidate && !validating && !success && !error) {
+    if (canValidate && !validating && !validateInFlightRef.current && !success && !error) {
       autoValidateTimer.current = setTimeout(() => {
         handleValidate();
       }, 800);

@@ -3,6 +3,7 @@ import { Client } from '@upstash/workflow'
 import { getWhatsAppCredentials } from '@/lib/whatsapp-credentials'
 import { supabase } from '@/lib/supabase'
 import { templateDb } from '@/lib/supabase-db'
+import { getAdaptiveThrottleConfigWithSource } from '@/lib/whatsapp-adaptive-throttle'
 
 import { precheckContactForTemplate } from '@/lib/whatsapp/template-contract'
 import { normalizePhoneNumber } from '@/lib/phone-formatter'
@@ -186,19 +187,33 @@ export async function POST(request: NextRequest) {
   // - O workflow reutiliza este mesmo traceId.
   const traceId = `cmp_${campaignId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 
-  // Carrega campanha cedo para:
-  // - validar gatilho de agendamento (evitar job “fantasma” após cancelamento)
+  // Carrega campanha E template em paralelo para:
+  // - validar gatilho de agendamento (evitar job "fantasma" após cancelamento)
   // - obter template_variables quando necessário
   // - evitar queries duplicadas (template_spec_hash)
-  const { data: campaignRow, error: campaignError } = await supabase
-    .from('campaigns')
-    .select('status, scheduled_date, template_variables, template_spec_hash')
-    .eq('id', campaignId)
-    .single()
+  // PERFORMANCE: Parallelized - these are independent queries
+  const [campaignResult, initialTemplate] = await Promise.all([
+    supabase
+      .from('campaigns')
+      .select('status, scheduled_date, template_variables, template_spec_hash')
+      .eq('id', campaignId)
+      .single(),
+    templateDb.getByName(templateName),
+  ])
+
+  const { data: campaignRow, error: campaignError } = campaignResult
 
   if (campaignError || !campaignRow) {
     console.error('[Dispatch] Campaign not found:', campaignError)
     return NextResponse.json({ error: 'Campanha não encontrada' }, { status: 404 })
+  }
+
+  // Validar template (fetched em paralelo acima)
+  if (!initialTemplate) {
+    return NextResponse.json(
+      { error: 'Template não encontrado no banco local. Sincronize Templates antes de disparar.' },
+      { status: 400 }
+    )
   }
 
   // Se o job veio do scheduler, só pode rodar se ainda estiver agendada.
@@ -258,16 +273,7 @@ export async function POST(request: NextRequest) {
     console.log('[Dispatch] Loaded template_variables from database:', resolvedTemplateVariables)
   }
 
-  // Fetch template from local DB cache (source operacional). Documented-only: sem template, sem envio.
-  const initialTemplate = await templateDb.getByName(templateName)
-  if (!initialTemplate) {
-    return NextResponse.json(
-      { error: 'Template não encontrado no banco local. Sincronize Templates antes de disparar.' },
-      { status: 400 }
-    )
-  }
-
-  // A partir daqui, `template` deve ser sempre definido.
+  // A partir daqui, `template` deve ser sempre definido (já validado acima no Promise.all).
   let template = initialTemplate
   const templateComponents = (template as any)?.components || (template as any)?.content || []
   const hasFlowButton = Array.isArray(templateComponents)
@@ -492,41 +498,46 @@ export async function POST(request: NextRequest) {
 
   // =====================================================================
   // Checagens globais (antes do precheck): opt-out + supressões
+  // PERFORMANCE: Parallelized - these are independent lookups
   // =====================================================================
   const uniqueContactIds = Array.from(
     new Set(normalizedInput.map((c) => String(c.contactId || '').trim()).filter(Boolean))
   )
 
-  const statusByContactId = new Map<string, string>()
-  if (uniqueContactIds.length > 0) {
-    const { data: contactRows, error: contactRowsError } = await supabase
-      .from('contacts')
-      .select('id, status')
-      .in('id', uniqueContactIds)
-
-    if (contactRowsError) {
-      console.warn('[Dispatch] Falha ao carregar status dos contatos (best-effort):', contactRowsError)
-    } else {
-      for (const row of (contactRows || []) as any[]) {
-        if (!row?.id) continue
-        statusByContactId.set(String(row.id), String(row.status || ''))
-      }
-    }
-  }
-
   const normalizedPhonesForSuppression = Array.from(
     new Set(normalizedInput.map((c) => normalizePhoneNumber(String(c.phone || '').trim())).filter(Boolean))
   )
 
-  let suppressionsByPhone = new Map<string, { phone: string; reason: string | null; source: string | null }>()
-  try {
-    const active = await getActiveSuppressionsByPhone(normalizedPhonesForSuppression)
-    suppressionsByPhone = new Map(
-      Array.from(active.entries()).map(([phone, row]) => [phone, { phone, reason: row.reason, source: row.source }])
-    )
-  } catch (e) {
-    console.warn('[Dispatch] Falha ao carregar phone_suppressions (best-effort):', e)
+  // Run status and suppressions lookups in parallel (they're independent)
+  const [contactStatusResult, suppressionsResult] = await Promise.all([
+    // Fetch contact statuses
+    uniqueContactIds.length > 0
+      ? supabase.from('contacts').select('id, status').in('id', uniqueContactIds)
+      : Promise.resolve({ data: null, error: null }),
+    // Fetch suppressions
+    getActiveSuppressionsByPhone(normalizedPhonesForSuppression).catch((e) => {
+      console.warn('[Dispatch] Falha ao carregar phone_suppressions (best-effort):', e)
+      return new Map<string, { reason: string | null; source: string | null }>()
+    }),
+  ])
+
+  // Process contact statuses
+  const statusByContactId = new Map<string, string>()
+  if (contactStatusResult.error) {
+    console.warn('[Dispatch] Falha ao carregar status dos contatos (best-effort):', contactStatusResult.error)
+  } else {
+    for (const row of (contactStatusResult.data || []) as any[]) {
+      if (!row?.id) continue
+      statusByContactId.set(String(row.id), String(row.status || ''))
+    }
   }
+
+  // Process suppressions
+  const suppressionsByPhone = suppressionsResult instanceof Map
+    ? new Map(
+        Array.from(suppressionsResult.entries()).map(([phone, row]) => [phone, { phone, reason: row.reason, source: row.source }])
+      )
+    : new Map<string, { phone: string; reason: string | null; source: string | null }>()
 
   const validContacts: DispatchContactResolved[] = []
   const skippedContacts: Array<{ contact: DispatchContact; code: string; reason: string; normalizedPhone?: string }> = []
@@ -728,6 +739,15 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Dispatch] Pré-check: ${validContacts.length} válidos, ${skippedContacts.length} ignorados (skipped)`)
 
+    // Atualiza estatísticas do planner após bulk upsert (best-effort).
+    // Sem isso, queries subsequentes (contagens, filtros) podem usar planos ruins
+    // porque o planner ainda vê as estatísticas pré-upsert.
+    try {
+      await supabase.rpc('analyze_table', { table_name: 'campaign_contacts' })
+    } catch {
+      // best-effort: não bloqueia o disparo se a function não existir (compat)
+    }
+
     // Reconciliar contadores da campanha com o que foi efetivamente persistido.
     // Motivo: contatos "skipped" no pré-check não passam pelo workflow, então
     // `campaigns.skipped` pode ficar 0 mesmo com linhas skipped em `campaign_contacts`.
@@ -749,7 +769,10 @@ export async function POST(request: NextRequest) {
       if (skippedErr) throw skippedErr
 
       const updateCampaign: Record<string, unknown> = { updated_at: nowIso }
-      if (typeof totalCount === 'number') updateCampaign.total_recipients = totalCount
+      if (typeof totalCount === 'number') {
+        const skippedSafe = typeof skippedCount === 'number' ? skippedCount : 0
+        updateCampaign.total_recipients = Math.max(0, totalCount - skippedSafe)
+      }
       if (typeof skippedCount === 'number') updateCampaign.skipped = skippedCount
 
       await supabase
@@ -910,6 +933,13 @@ export async function POST(request: NextRequest) {
     console.log(`[Dispatch] Is localhost: ${isLocalhost}`)
     console.log(`[Dispatch] traceId: ${traceId}`)
 
+    // Ler config de throttle AQUI no dispatch (onde temos acesso garantido ao Supabase)
+    // e passar para o workflow, evitando que o QStash precise acessar o DB
+    const throttleConfigResult = await getAdaptiveThrottleConfigWithSource().catch(() => null)
+    const throttleConfig = throttleConfigResult?.config ?? null
+    const throttleSource = throttleConfigResult?.source ?? 'fallback'
+    console.log(`[Dispatch] Throttle config source: ${throttleSource}`, throttleConfig ? JSON.stringify(throttleConfig) : 'null')
+
     const workflowPayload = {
       campaignId,
       traceId,
@@ -926,12 +956,20 @@ export async function POST(request: NextRequest) {
       },
       phoneNumberId,
       accessToken,
+      // Config de throttle passada do dispatch para evitar dependência de DB no QStash
+      throttleConfig,
     }
 
-    const shouldBypassQstash = isLocalhost || (isDev && !process.env.QSTASH_TOKEN)
+    // BYPASS apenas em localhost REAL (dev local) - nunca em Vercel (preview ou prod)
+    // Vercel sempre tem VERCEL_ENV definido, então se existir, estamos na cloud
+    const isVercelCloud = Boolean(process.env.VERCEL_ENV || process.env.VERCEL)
+    const shouldBypassQstash = isLocalhost && !isVercelCloud
+
+    console.log(`[Dispatch] QStash decision: isLocalhost=${isLocalhost}, isVercelCloud=${isVercelCloud}, shouldBypass=${shouldBypassQstash}`)
+
     if (shouldBypassQstash) {
-      // DEV: Call workflow endpoint directly (QStash can't reach localhost)
-      console.log('[Dispatch] Dev direct call - bypassing QStash')
+      // DEV LOCAL: Call workflow endpoint directly (QStash can't reach localhost)
+      console.log('[Dispatch] Dev LOCAL direct call - bypassing QStash (localhost only)')
 
       const response = await fetchWithTimeout(`${baseUrl}/api/campaign/workflow`, {
         method: 'POST',
@@ -957,9 +995,17 @@ export async function POST(request: NextRequest) {
       // PROD: Use QStash for reliable async execution
       const workflowClient = new Client({ token: process.env.QSTASH_TOKEN })
       try {
+        // Headers para bypass de Vercel Deployment Protection
+        const headers: Record<string, string> = {}
+        const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+        if (bypassSecret) {
+          headers['x-vercel-protection-bypass'] = bypassSecret
+        }
+
         await workflowClient.trigger({
           url: `${baseUrl}/api/campaign/workflow`,
           body: workflowPayload,
+          headers: Object.keys(headers).length > 0 ? headers : undefined,
         })
       } catch (err) {
         throw err

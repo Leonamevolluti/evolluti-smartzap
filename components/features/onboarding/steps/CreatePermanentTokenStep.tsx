@@ -6,7 +6,6 @@ import {
   ExternalLink,
   Key,
   Shield,
-  AlertTriangle,
   CheckCircle2,
   Copy,
   Check,
@@ -15,6 +14,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { StepHeader } from './StepHeader';
 import { toast } from 'sonner';
 
@@ -28,6 +28,8 @@ interface CreatePermanentTokenStepProps {
   totalSteps: number;
 }
 
+type SubStep = 'create-user' | 'generate-token';
+
 export function CreatePermanentTokenStep({
   currentToken,
   onTokenUpdate,
@@ -37,6 +39,8 @@ export function CreatePermanentTokenStep({
   stepNumber,
   totalSteps,
 }: CreatePermanentTokenStepProps) {
+  const [subStep, setSubStep] = useState<SubStep>('create-user');
+  const [userCreated, setUserCreated] = useState(false);
   const [permanentToken, setPermanentToken] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [copiedPermission, setCopiedPermission] = useState<string | null>(null);
@@ -66,10 +70,9 @@ export function CreatePermanentTokenStep({
       return;
     }
 
-    // Validação básica - tokens do Meta começam com EAAG
-    if (!permanentToken.startsWith('EAAG')) {
+    if (!permanentToken.startsWith('EAA')) {
       toast.error('Token inválido', {
-        description: 'O token deve começar com "EAAG"',
+        description: 'O token deve começar com "EAA"',
       });
       return;
     }
@@ -90,86 +93,169 @@ export function CreatePermanentTokenStep({
     }
   };
 
+  // ============================================================================
+  // Sub-step 1: Criar System User
+  // ============================================================================
+  if (subStep === 'create-user') {
+    return (
+      <div className="space-y-6">
+        <StepHeader
+          stepNumber={stepNumber}
+          totalSteps={totalSteps}
+          title="Criar Usuário do Sistema"
+          onBack={onBack}
+        />
+
+        {/* Explicação */}
+        <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
+          <div className="flex items-start gap-3">
+            <Key className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="font-medium text-blue-200 mb-1">Por que criar um token permanente?</p>
+              <p className="text-sm text-blue-200/80">
+                O token temporário expira em ~24 horas. Para evitar interrupções,
+                crie um <strong>System User</strong> que gera tokens permanentes.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Instruções */}
+        <div className="space-y-3">
+          <h4 className="text-sm font-medium text-zinc-300 flex items-center gap-2">
+            <Shield className="w-4 h-4 text-emerald-500" />
+            No Meta Business:
+          </h4>
+
+          <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800/50">
+            <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center text-sm font-medium flex-shrink-0">1</span>
+            <p className="text-zinc-300">
+              Acesse <strong className="text-white">Configurações do negócio</strong> → <strong className="text-white">Usuários do sistema</strong>
+            </p>
+          </div>
+
+          <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800/50">
+            <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center text-sm font-medium flex-shrink-0">2</span>
+            <div className="text-zinc-300">
+              <p>Clique em <strong className="text-white">"Adicionar"</strong></p>
+              <p className="text-zinc-500 text-sm">Nome: "SmartZap API" • Função: Admin</p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800/50">
+            <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center text-sm font-medium flex-shrink-0">3</span>
+            <p className="text-zinc-300">
+              Selecione o usuário e clique em <strong className="text-white">"Atribuir ativos"</strong>
+            </p>
+          </div>
+
+          <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800/50">
+            <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center text-sm font-medium flex-shrink-0">4</span>
+            <div className="text-zinc-300">
+              <p>Atribua seu <strong className="text-white">App</strong></p>
+              <p className="text-zinc-500 text-sm">Ative "Gerenciar aplicativo" em Controle total</p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800/50">
+            <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center text-sm font-medium flex-shrink-0">5</span>
+            <div className="text-zinc-300">
+              <p>Atribua sua <strong className="text-white">Conta WhatsApp Business</strong></p>
+              <p className="text-zinc-500 text-sm">Ative "Gerenciar conta do WhatsApp Business"</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Botão para abrir Meta Business */}
+        <a
+          href={META_BUSINESS_SETTINGS_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-center gap-2 w-full p-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+        >
+          <ExternalLink className="w-4 h-4" />
+          Abrir Configurações do Negócio
+        </a>
+
+        {/* Confirmação */}
+        <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800/50 border border-zinc-700">
+          <Checkbox
+            id="confirm-user"
+            checked={userCreated}
+            onCheckedChange={(checked) => setUserCreated(checked === true)}
+            className="mt-0.5 border-emerald-500 data-[state=checked]:bg-emerald-500"
+          />
+          <label
+            htmlFor="confirm-user"
+            className="text-sm text-zinc-300 cursor-pointer select-none leading-relaxed"
+          >
+            Criei o usuário do sistema e atribuí os ativos (App + Conta WhatsApp)
+          </label>
+        </div>
+
+        {/* Ações */}
+        <div className="flex gap-3 pt-2">
+          {onSkip && (
+            <Button variant="outline" onClick={onSkip} className="flex-1">
+              Pular por agora
+            </Button>
+          )}
+          <Button
+            onClick={() => setSubStep('generate-token')}
+            disabled={!userCreated}
+            className="flex-1"
+          >
+            Continuar
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </Button>
+        </div>
+
+        {onSkip && (
+          <p className="text-xs text-zinc-500 text-center">
+            Você pode criar o token permanente depois em Configurações
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // Sub-step 2: Gerar Token
+  // ============================================================================
   return (
     <div className="space-y-6">
       <StepHeader
         stepNumber={stepNumber}
         totalSteps={totalSteps}
-        title="Criar Token Permanente"
-        onBack={onBack}
+        title="Gerar Token Permanente"
+        onBack={() => setSubStep('create-user')}
       />
-
-      {/* Explicação */}
-      <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
-        <div className="flex items-start gap-3">
-          <Key className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" />
-          <div>
-            <p className="font-medium text-blue-200 mb-1">Por que criar um token permanente?</p>
-            <p className="text-sm text-blue-200/80">
-              O token temporário expira em ~24 horas. Para evitar interrupções no serviço,
-              crie um <strong>System User</strong> no Meta Business e gere um token que não expira.
-            </p>
-          </div>
-        </div>
-      </div>
 
       {/* Instruções */}
       <div className="space-y-3">
-        <h4 className="text-sm font-medium text-zinc-300 flex items-center gap-2">
-          <Shield className="w-4 h-4 text-emerald-500" />
-          Siga os passos no Meta Business:
+        <h4 className="text-sm font-medium text-zinc-300">
+          Ainda na página do usuário do sistema:
         </h4>
 
         <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800/50">
           <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center text-sm font-medium flex-shrink-0">1</span>
-          <div className="text-zinc-300">
-            <p>Acesse <strong className="text-white">Configurações do negócio</strong> → <strong className="text-white">Usuários do sistema</strong></p>
-          </div>
+          <p className="text-zinc-300">
+            Clique em <strong className="text-white">"Gerar token"</strong>
+          </p>
         </div>
 
         <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800/50">
           <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center text-sm font-medium flex-shrink-0">2</span>
-          <div className="text-zinc-300">
-            <p>Clique em <strong className="text-white">"Adicionar"</strong> para criar um novo usuário do sistema</p>
-            <p className="text-zinc-500 text-sm">Nome sugerido: "SmartZap API" - Função: Admin</p>
-          </div>
+          <p className="text-zinc-300">
+            Selecione seu <strong className="text-white">App</strong> no dropdown
+          </p>
         </div>
 
         <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800/50">
           <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center text-sm font-medium flex-shrink-0">3</span>
-          <div className="text-zinc-300">
-            <p>Selecione o usuário criado e clique em <strong className="text-white">"Atribuir ativos"</strong></p>
-          </div>
-        </div>
-
-        <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800/50">
-          <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center text-sm font-medium flex-shrink-0">4</span>
-          <div className="text-zinc-300">
-            <p>Atribua seu <strong className="text-white">App</strong> com permissão <strong className="text-white">"Gerenciar aplicativo"</strong></p>
-            <p className="text-zinc-500 text-sm">Em "Controle total", ative "Gerenciar aplicativo"</p>
-          </div>
-        </div>
-
-        <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800/50">
-          <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center text-sm font-medium flex-shrink-0">5</span>
-          <div className="text-zinc-300">
-            <p>Atribua sua <strong className="text-white">Conta WhatsApp Business</strong></p>
-            <p className="text-zinc-500 text-sm">Em "Controle total", ative "Gerenciar conta do WhatsApp Business"</p>
-          </div>
-        </div>
-
-        <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800/50">
-          <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center text-sm font-medium flex-shrink-0">6</span>
-          <div className="text-zinc-300">
-            <p>Clique em <strong className="text-white">"Gerar token"</strong></p>
-          </div>
-        </div>
-
-        <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800/50">
-          <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center text-sm font-medium flex-shrink-0">7</span>
-          <div className="text-zinc-300">
-            <p>Adicione as <strong className="text-white">permissões obrigatórias</strong>:</p>
-          </div>
+          <p className="text-zinc-300">
+            Adicione as <strong className="text-white">permissões</strong> abaixo:
+          </p>
         </div>
       </div>
 
@@ -198,17 +284,6 @@ export function CreatePermanentTokenStep({
         ))}
       </div>
 
-      {/* Botão para abrir Meta Business */}
-      <a
-        href={META_BUSINESS_SETTINGS_URL}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex items-center justify-center gap-2 w-full p-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
-      >
-        <ExternalLink className="w-4 h-4" />
-        Abrir Configurações do Negócio
-      </a>
-
       {/* Input do token */}
       <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 space-y-3">
         <Label className="text-zinc-300 flex items-center gap-2">
@@ -223,21 +298,8 @@ export function CreatePermanentTokenStep({
           className="font-mono"
         />
         <p className="text-xs text-zinc-500">
-          O token começa com "EAAG" e tem centenas de caracteres
+          O token começa com "EAA" e tem centenas de caracteres
         </p>
-      </div>
-
-      {/* Aviso de segurança */}
-      <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20">
-        <div className="flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
-          <div>
-            <p className="font-medium text-amber-200 mb-1">Guarde seu token com segurança!</p>
-            <p className="text-sm text-amber-200/80">
-              O token só é exibido uma vez. Copie e guarde em local seguro antes de sair da página do Meta.
-            </p>
-          </div>
-        </div>
       </div>
 
       {/* Ações */}
@@ -260,17 +322,11 @@ export function CreatePermanentTokenStep({
           ) : (
             <>
               <CheckCircle2 className="w-4 h-4 mr-2" />
-              Salvar Token Permanente
+              Salvar Token
             </>
           )}
         </Button>
       </div>
-
-      {onSkip && (
-        <p className="text-xs text-zinc-500 text-center">
-          Você pode criar o token permanente depois em Configurações → WhatsApp
-        </p>
-      )}
     </div>
   );
 }

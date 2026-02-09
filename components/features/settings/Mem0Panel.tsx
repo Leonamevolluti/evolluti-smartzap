@@ -32,7 +32,7 @@ export function Mem0Panel() {
   const fetchConfig = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/settings/mem0');
+      const res = await fetch('/api/settings/mem0', { cache: 'no-store' });
       const data = await res.json();
 
       if (data.ok) {

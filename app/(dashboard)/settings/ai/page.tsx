@@ -19,10 +19,12 @@ import {
   Drama,
   Target,
 } from 'lucide-react'
+// import { AIGatewayPanel } from '@/components/features/settings/AIGatewayPanel' // DESABILITADO (bug #11280)
 import { HeliconePanel } from '@/components/features/settings/HeliconePanel'
 import { Mem0Panel } from '@/components/features/settings/Mem0Panel'
 import { Page, PageActions, PageDescription, PageHeader, PageTitle } from '@/components/ui/page'
 import { AI_PROVIDERS, type AIProvider } from '@/lib/ai/providers'
+import { useDevMode } from '@/components/providers/DevModeProvider'
 import { DEFAULT_MODEL_ID } from '@/lib/ai/model'
 import {
   DEFAULT_AI_FALLBACK,
@@ -568,6 +570,8 @@ function PromptCard({
 }
 
 export default function AICenterPage() {
+  const { isDevMode } = useDevMode()
+
   const [providerStatuses, setProviderStatuses] = useState<AIConfigResponse['providers']>({
     google: EMPTY_PROVIDER_STATUS,
     openai: EMPTY_PROVIDER_STATUS,
@@ -598,10 +602,14 @@ export default function AICenterPage() {
   // Collapsible sections
   const [isStrategiesOpen, setIsStrategiesOpen] = useState(false)
 
-  const orderedProviders = useMemo(
-    () => normalizeProviderOrder(fallback.order),
-    [fallback.order]
-  )
+  const orderedProviders = useMemo(() => {
+    const allProviders = normalizeProviderOrder(fallback.order)
+    // Só mostra OpenAI e Anthropic no modo desenvolvedor
+    if (!isDevMode) {
+      return allProviders.filter(p => p === 'google')
+    }
+    return allProviders
+  }, [fallback.order, isDevMode])
   const configuredProvidersCount = useMemo(() => {
     return Object.values(providerStatuses).filter(s => s.isConfigured).length
   }, [providerStatuses])
@@ -693,7 +701,10 @@ export default function AICenterPage() {
 
   const handleProviderSelect = (nextProvider: AIProvider) => {
     setProvider(nextProvider)
-    setModel(getDefaultModelId(nextProvider))
+    // Usa o modelo já configurado no fallback (se existir) ou o padrão
+    const savedModel = fallback.models?.[nextProvider]
+    const nextModel = savedModel || getDefaultModelId(nextProvider)
+    setModel(nextModel)
     setFallback((current) => {
       const currentOrder = normalizeProviderOrder(current.order)
       return {
@@ -858,6 +869,34 @@ export default function AICenterPage() {
         </div>
       )}
 
+      {/* Loading skeleton - evita flash de estado incorreto */}
+      {isLoading && (
+        <div className="space-y-6 animate-pulse">
+          <div className="rounded-2xl border border-[var(--ds-border-default)] bg-[var(--ds-bg-elevated)] p-4">
+            <div className="flex items-center gap-3">
+              <div className="size-10 rounded-xl bg-[var(--ds-bg-hover)]" />
+              <div className="space-y-2 flex-1">
+                <div className="h-4 w-32 rounded bg-[var(--ds-bg-hover)]" />
+                <div className="h-3 w-48 rounded bg-[var(--ds-bg-hover)]" />
+              </div>
+            </div>
+          </div>
+          <div className="glass-panel rounded-2xl p-6">
+            <div className="space-y-4">
+              <div className="h-5 w-40 rounded bg-[var(--ds-bg-hover)]" />
+              <div className="h-3 w-64 rounded bg-[var(--ds-bg-hover)]" />
+              <div className="space-y-2 mt-4">
+                <div className="h-16 rounded-xl bg-[var(--ds-bg-hover)]" />
+                <div className="h-16 rounded-xl bg-[var(--ds-bg-hover)]" />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Conteúdo principal - só mostra após carregar */}
+      {!isLoading && (
+        <>
       {/* Quick link to AI Agents */}
       <div className="mb-6">
         <a
@@ -958,7 +997,7 @@ export default function AICenterPage() {
                         <div className="text-sm font-semibold text-[var(--ds-text-primary)]">{item.name}</div>
                         {status.isConfigured && (
                           <div className="text-xs text-[var(--ds-text-secondary)]">
-                            Modelo: {isActive ? primaryModelLabel : item.models[0]?.name ?? '—'}
+                            Modelo: {isActive ? primaryModelLabel : getModelLabel(item.id, fallback.models?.[item.id] || item.models[0]?.id || '')}
                           </div>
                         )}
                       </div>
@@ -1062,18 +1101,22 @@ export default function AICenterPage() {
 
           {/* Nota de ajuda unificada */}
           <div className="mt-4 flex items-center gap-3 rounded-lg border border-[var(--ds-border-subtle)] bg-[var(--ds-bg-tertiary)] px-4 py-2.5 text-xs">
-            <span className="text-[var(--ds-text-secondary)]">Obter chaves:</span>
+            <span className="text-[var(--ds-text-secondary)]">Obter chave:</span>
             <a href={API_KEY_URLS.google.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-emerald-400 hover:text-emerald-300 hover:underline">
               Google <ExternalLink className="size-3" />
             </a>
-            <span className="text-[var(--ds-text-muted)]">•</span>
-            <a href={API_KEY_URLS.openai.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-emerald-400 hover:text-emerald-300 hover:underline">
-              OpenAI <ExternalLink className="size-3" />
-            </a>
-            <span className="text-[var(--ds-text-muted)]">•</span>
-            <a href={API_KEY_URLS.anthropic.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-emerald-400 hover:text-emerald-300 hover:underline">
-              Anthropic <ExternalLink className="size-3" />
-            </a>
+            {isDevMode && (
+              <>
+                <span className="text-[var(--ds-text-muted)]">•</span>
+                <a href={API_KEY_URLS.openai.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-emerald-400 hover:text-emerald-300 hover:underline">
+                  OpenAI <ExternalLink className="size-3" />
+                </a>
+                <span className="text-[var(--ds-text-muted)]">•</span>
+                <a href={API_KEY_URLS.anthropic.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-emerald-400 hover:text-emerald-300 hover:underline">
+                  Anthropic <ExternalLink className="size-3" />
+                </a>
+              </>
+            )}
           </div>
         </section>
 
@@ -1274,7 +1317,11 @@ export default function AICenterPage() {
         {/* Mem0 Memory Section */}
         <Mem0Panel />
 
-        {/* Helicone Observability Section */}
+        {/* AI Gateway Section - DESABILITADO temporariamente (bug #11280: BYOK não funciona com créditos zerados)
+        <AIGatewayPanel />
+        */}
+
+        {/* Helicone Observability Section (usado quando Gateway desabilitado) */}
         <HeliconePanel />
 
         {/* Template Strategies Section - Collapsible */}
@@ -1432,6 +1479,8 @@ export default function AICenterPage() {
           </div>
         </section>
       </div>
+        </>
+      )}
     </Page>
   )
 }

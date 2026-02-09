@@ -1,5 +1,6 @@
 export type Spec = any
 
+// Tipos de botão suportados pela Meta API para templates de mensagem.
 export type ButtonType =
   | 'QUICK_REPLY'
   | 'URL'
@@ -7,15 +8,6 @@ export type ButtonType =
   | 'COPY_CODE'
   | 'OTP'
   | 'FLOW'
-  | 'CATALOG'
-  | 'MPM'
-  | 'VOICE_CALL'
-  | 'EXTENSION'
-  | 'ORDER_DETAILS'
-  | 'POSTBACK'
-  | 'REMINDER'
-  | 'SEND_LOCATION'
-  | 'SPM'
 
 export type Flow = {
   id: string

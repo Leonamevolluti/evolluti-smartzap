@@ -13,6 +13,7 @@
 - [Como Usar](#-como-usar)
 - [Configurações](#%EF%B8%8F-configurações)
 - [Problemas Comuns](#-problemas-comuns)
+- [FAQ](#faq)
 - [Suporte](#-suporte)
 
 ---
@@ -94,7 +95,7 @@ Este guia vai te levar do zero até ter o SmartZap funcionando.
 ```mermaid
 flowchart LR
     A[Fork no GitHub] --> B[Deploy na Vercel]
-    B --> C[Abrir /install/start]
+    B --> C[Abrir /install]
     C --> D[Wizard configura tudo]
     D --> E[Pronto!]
 ```
@@ -147,7 +148,7 @@ Antes de começar, você precisa de contas nestes serviços:
 ### Passo 3: Rodar o Wizard de Instalação
 
 1. **Acesse o wizard**
-   - Abra: `https://SEU-PROJETO.vercel.app/install/start`
+   - Abra: `https://SEU-PROJETO.vercel.app/install`
 
 2. **O wizard tem 5 etapas:**
 
@@ -347,6 +348,7 @@ O SmartZap usa dois serviços do Upstash:
 **Solução:**
 - Verifique se completou a instalação via wizard
 - Confirme a senha que você configurou
+- Veja a seção [FAQ → Como resetar minha senha?](#como-resetar-minha-senha)
 
 ### Mensagens não estão sendo enviadas
 
@@ -406,6 +408,25 @@ O SmartZap usa dois serviços do Upstash:
 1. Instale o app como PWA (adicionar à tela inicial)
 2. Aceite as permissões de notificação
 3. Em iOS, precisa adicionar à tela inicial primeiro
+
+---
+
+## FAQ
+
+### Como resetar minha senha?
+
+1. Acesse vercel.com e faça login
+2. Clique no seu projeto SmartZap
+3. Clique em **Settings** (menu da esquerda)
+4. Clique em **Environment Variables**
+5. Ache `MASTER_PASSWORD` na lista
+6. Clique nos 3 pontinhos do lado direito → **Edit**
+7. Apague tudo e digite sua nova senha (ex: `MinhaSenha123`)
+8. Clique em **Save**
+9. Clique em **Deployments** (menu da esquerda)
+10. No primeiro da lista, clique nos 3 pontinhos → **Redeploy** → **Redeploy**
+11. Espera 1 minuto
+12. Pronto! Entra com a nova senha.
 
 ---
 

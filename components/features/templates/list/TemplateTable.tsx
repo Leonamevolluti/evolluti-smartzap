@@ -31,6 +31,8 @@ export interface TemplateTableProps {
   onViewDetails: (template: Template) => void;
   onDeleteClick: (template: Template) => void;
   onCreateCampaign?: (template: Template) => void;
+  onCloneTemplate?: (template: Template) => void;
+  cloningTemplateName?: string | null;
   // Hover
   onHoverTemplate: (templateId: string | null) => void;
   onPrefetchPreview?: (template: Template) => void;
@@ -60,6 +62,8 @@ export const TemplateTable: React.FC<TemplateTableProps> = ({
   onViewDetails,
   onDeleteClick,
   onCreateCampaign,
+  onCloneTemplate,
+  cloningTemplateName,
   onHoverTemplate,
   onPrefetchPreview,
   onToggleAllDrafts,
@@ -145,25 +149,24 @@ export const TemplateTable: React.FC<TemplateTableProps> = ({
                   )}
                 </button>
               </th>
-              <th className="px-4 py-4 font-medium">Nome</th>
-              <th className="px-4 py-4 font-medium">Status</th>
-              <th className="px-4 py-4 font-medium">Categoria</th>
-              <th className="px-4 py-4 font-medium">Idioma</th>
-              <th className="px-4 py-4 font-medium max-w-xs">Conteudo</th>
-              <th className="px-4 py-4 font-medium">Atualizado</th>
-              <th className="px-4 py-4 font-medium text-right">Acoes</th>
+              <th className="px-4 py-4 font-medium w-44">Nome</th>
+              <th className="px-2 py-4 font-medium w-20">Status</th>
+              <th className="px-2 py-4 font-medium w-24">Categoria</th>
+              <th className="px-3 py-4 font-medium">Conteudo</th>
+              <th className="px-2 py-4 font-medium w-24">Atualizado</th>
+              <th className="px-2 py-4 font-medium text-right w-32">Acoes</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--ds-border-default)]">
             {isLoading ? (
               <tr>
-                <td colSpan={8} className="px-6 py-16 text-center text-[var(--ds-text-secondary)]">
+                <td colSpan={7} className="px-6 py-16 text-center text-[var(--ds-text-secondary)]">
                   Carregando templates...
                 </td>
               </tr>
             ) : templates.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-6 py-16 text-center">
+                <td colSpan={7} className="px-6 py-16 text-center">
                   <div className="w-16 h-16 bg-[var(--ds-bg-elevated)] rounded-full flex items-center justify-center mx-auto mb-4 text-[var(--ds-text-muted)]">
                     <FileText size={32} />
                   </div>
@@ -188,6 +191,7 @@ export const TemplateTable: React.FC<TemplateTableProps> = ({
                     isRowSelected={isRowSelected}
                     isSubmitting={submittingManualDraftId === template.id}
                     isDeletingDraft={deletingManualDraftId === template.id}
+                    isCloning={cloningTemplateName === template.name}
                     canSend={canSendDraft(template)}
                     sendReason={manualDraftSendStateById?.[template.id]?.reason}
                     onToggleSelection={() =>
@@ -198,6 +202,7 @@ export const TemplateTable: React.FC<TemplateTableProps> = ({
                     onSubmitDraft={() => submitManualDraft(template.id)}
                     onDeleteDraft={() => deleteManualDraft(template.id)}
                     onCreateCampaign={onCreateCampaign ? () => onCreateCampaign(template) : undefined}
+                    onCloneTemplate={onCloneTemplate ? () => onCloneTemplate(template) : undefined}
                     onMouseEnter={() => onHoverTemplate(template.id)}
                     onMouseLeave={() => onHoverTemplate(null)}
                     onPrefetchPreview={onPrefetchPreview ? () => onPrefetchPreview(template) : undefined}

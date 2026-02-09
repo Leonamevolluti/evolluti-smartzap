@@ -35,18 +35,12 @@ const MAIN_ITEMS: DropdownItemConfig[] = [
   { type: 'COPY_CODE', label: 'Copiar codigo', shortcut: 'max 1' },
 ]
 
+// Apenas tipos de botão que a Meta API realmente suporta em templates.
+// Tipos como REMINDER, POSTBACK, EXTENSION, ORDER_DETAILS, SPM, SEND_LOCATION
+// não são válidos para templates de mensagem e causam erro da Meta.
 const ADVANCED_ITEMS: DropdownItemConfig[] = [
-  { type: 'FLOW', label: 'MiniApp' },
-  { type: 'OTP', label: 'OTP' },
-  { type: 'CATALOG', label: 'Catalogo' },
-  { type: 'MPM', label: 'MPM' },
-  { type: 'VOICE_CALL', label: 'Chamada de voz' },
-  { type: 'ORDER_DETAILS', label: 'Detalhes do pedido' },
-  { type: 'SPM', label: 'SPM' },
-  { type: 'SEND_LOCATION', label: 'Enviar localizacao' },
-  { type: 'REMINDER', label: 'Lembrete' },
-  { type: 'POSTBACK', label: 'Postback' },
-  { type: 'EXTENSION', label: 'Extensao' },
+  { type: 'FLOW', label: 'MiniApp (requer Flow ID)' },
+  { type: 'OTP', label: 'OTP (apenas Autenticacao)' },
 ]
 
 export function AddButtonDropdown({ addButton, canAddButtonType }: AddButtonDropdownProps) {

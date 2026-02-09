@@ -74,7 +74,7 @@ function parseJsonState(raw: string | null): AdaptiveThrottleState | null {
 }
 
 function defaultState(): AdaptiveThrottleState {
-  const start = clampInt(Number(process.env.WHATSAPP_ADAPTIVE_START_MPS || '30'), MIN_RATE_LIMIT, MAX_RATE_LIMIT)
+  const start = clampInt(Number(process.env.WHATSAPP_ADAPTIVE_START_MPS || '20'), MIN_RATE_LIMIT, MAX_RATE_LIMIT)
   return {
     targetMps: start,
     cooldownUntil: null,
@@ -85,11 +85,15 @@ function defaultState(): AdaptiveThrottleState {
 }
 
 function configFromEnv(): AdaptiveThrottleConfig {
+  // Defaults: Balanced profile (ativado por padrão, valores conservadores que sobem automaticamente)
+  const enabledEnv = process.env.WHATSAPP_ADAPTIVE_THROTTLE
+  const enabled = enabledEnv === undefined ? true : enabledEnv === '1' // Default: true
+
   return {
-    enabled: process.env.WHATSAPP_ADAPTIVE_THROTTLE === '1',
-    sendConcurrency: clampInt(Number(process.env.WHATSAPP_SEND_CONCURRENCY || '1'), 1, 50),
-    batchSize: clampInt(Number(process.env.WHATSAPP_WORKFLOW_BATCH_SIZE || '10'), 1, 200),
-    startMps: clampInt(Number(process.env.WHATSAPP_ADAPTIVE_START_MPS || '30'), MIN_RATE_LIMIT, MAX_RATE_LIMIT),
+    enabled,
+    sendConcurrency: clampInt(Number(process.env.WHATSAPP_SEND_CONCURRENCY || '2'), 1, 50),
+    batchSize: clampInt(Number(process.env.WHATSAPP_WORKFLOW_BATCH_SIZE || '40'), 1, 200),
+    startMps: clampInt(Number(process.env.WHATSAPP_ADAPTIVE_START_MPS || '20'), MIN_RATE_LIMIT, MAX_RATE_LIMIT),
     maxMps: clampInt(Number(process.env.WHATSAPP_ADAPTIVE_MAX_MPS || '80'), MIN_RATE_LIMIT, MAX_RATE_LIMIT),
     minMps: clampInt(Number(process.env.WHATSAPP_ADAPTIVE_MIN_MPS || '5'), MIN_RATE_LIMIT, MAX_RATE_LIMIT),
     cooldownSec: clampInt(Number(process.env.WHATSAPP_ADAPTIVE_COOLDOWN_SEC || '30'), 1, 600),

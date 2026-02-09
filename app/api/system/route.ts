@@ -331,8 +331,27 @@ export async function GET() {
       if (process.env.QSTASH_TOKEN) {
         response.health.services.qstash = { status: 'ok', message: 'Token configured' }
 
-        const upstashEmail = process.env.UPSTASH_EMAIL
-        const upstashApiKey = process.env.UPSTASH_API_KEY
+        // Tentar env vars primeiro, depois banco de dados
+        let upstashEmail = process.env.UPSTASH_EMAIL
+        let upstashApiKey = process.env.UPSTASH_API_KEY
+
+        // Se não tiver env var, buscar do banco
+        if (!upstashEmail || !upstashApiKey) {
+          try {
+            const { data: settingsData } = await supabase
+              .from('settings')
+              .select('key, value')
+              .in('key', ['upstashEmail', 'upstashApiKey'])
+
+            if (settingsData) {
+              const settingsMap = new Map(settingsData.map(s => [s.key, s.value]))
+              upstashEmail = upstashEmail || (settingsMap.get('upstashEmail') as string) || ''
+              upstashApiKey = upstashApiKey || (settingsMap.get('upstashApiKey') as string) || ''
+            }
+          } catch {
+            // Ignore errors fetching from DB
+          }
+        }
 
         if (upstashEmail && upstashApiKey) {
           try {

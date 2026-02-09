@@ -1,5 +1,10 @@
 import { defineConfig } from 'vitest/config';
 import path from 'path';
+import { config } from 'dotenv';
+
+// Carrega variáveis de ambiente para testes
+config({ path: '.env.local' });
+config({ path: '.env.test.local' });
 
 export default defineConfig({
     test: {

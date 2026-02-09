@@ -18,7 +18,7 @@ export const TemplateHoverPreview: React.FC<TemplateHoverPreviewProps> = ({
   if (!template) return null;
 
   return (
-    <div className="pointer-events-none hidden xl:block fixed right-8 top-32 z-40 w-90">
+    <div className="pointer-events-none hidden xl:block fixed right-96 top-52 z-40 w-90 animate-in fade-in-0 zoom-in-95 duration-150">
       <TemplatePreviewCard
         templateName={template.name}
         components={template.components}
@@ -26,7 +26,7 @@ export const TemplateHoverPreview: React.FC<TemplateHoverPreviewProps> = ({
         parameterFormat={template.parameterFormat || 'positional'}
         variables={variables}
         headerMediaPreviewUrl={template.headerMediaPreviewUrl || null}
-        className="bg-zinc-950/80"
+        className="!bg-zinc-950 !backdrop-blur-none shadow-2xl shadow-black/50 ring-1 ring-white/10"
       />
     </div>
   );

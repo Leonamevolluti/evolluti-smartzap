@@ -85,6 +85,8 @@ export function AIAgentForm({
   const [handoffEnabled, setHandoffEnabled] = useState(true)
   const [handoffInstructions, setHandoffInstructions] = useState('')
   const [bookingToolEnabled, setBookingToolEnabled] = useState(false)
+  const [allowReactions, setAllowReactions] = useState(true)
+  const [allowQuotes, setAllowQuotes] = useState(true)
 
   // RAG: Embedding config
   const [embeddingProvider, setEmbeddingProvider] = useState<EmbeddingProvider>(DEFAULT_EMBEDDING_CONFIG.provider)
@@ -219,6 +221,8 @@ export function AIAgentForm({
       setHandoffEnabled(agent.handoff_enabled ?? true)
       setHandoffInstructions(agent.handoff_instructions || DEFAULT_HANDOFF_INSTRUCTIONS)
       setBookingToolEnabled(agent.booking_tool_enabled ?? false)
+      setAllowReactions(agent.allow_reactions ?? true)
+      setAllowQuotes(agent.allow_quotes ?? true)
       // RAG config
       setEmbeddingProvider(agent.embedding_provider || DEFAULT_EMBEDDING_CONFIG.provider)
       setEmbeddingModel(agent.embedding_model || DEFAULT_EMBEDDING_CONFIG.model)
@@ -243,6 +247,8 @@ export function AIAgentForm({
       setHandoffEnabled(true)
       setHandoffInstructions(DEFAULT_HANDOFF_INSTRUCTIONS)
       setBookingToolEnabled(false)
+      setAllowReactions(true)
+      setAllowQuotes(true)
       // RAG config defaults
       setEmbeddingProvider(DEFAULT_EMBEDDING_CONFIG.provider)
       setEmbeddingModel(DEFAULT_EMBEDDING_CONFIG.model)
@@ -272,6 +278,8 @@ export function AIAgentForm({
       handoff_enabled: handoffEnabled,
       handoff_instructions: handoffEnabled ? handoffInstructions : null,
       booking_tool_enabled: bookingToolEnabled,
+      allow_reactions: allowReactions,
+      allow_quotes: allowQuotes,
       // RAG config
       embedding_provider: embeddingProvider,
       embedding_model: embeddingModel,
@@ -335,6 +343,10 @@ export function AIAgentForm({
 
   // Get selected model info
   const selectedModel = AI_PROVIDERS.flatMap(p => p.models).find((m) => m.id === model)
+
+  // Verifica se há pelo menos um provider LLM disponível (com API key configurada)
+  const hasAvailableLLMProvider = availableLLMProviders.length === 0 || availableLLMProviders.some(p => p.available)
+  const isLLMProviderCheckComplete = !llmProvidersLoading && availableLLMProviders.length > 0
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -412,10 +424,15 @@ export function AIAgentForm({
                   <p className="text-xs text-[var(--ds-text-muted)]">{selectedModel.description}</p>
                 )}
                 {/* Warning if no providers available */}
-                {availableLLMProviders.length > 0 && availableLLMProviders.every(p => !p.available) && (
-                  <div className="flex items-center gap-2 rounded-md bg-amber-500/10 p-2 text-xs text-amber-400">
-                    <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                    <span>Nenhum provider configurado. Configure uma API key em Configurações → IA.</span>
+                {isLLMProviderCheckComplete && !hasAvailableLLMProvider && (
+                  <div className="flex items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+                    <AlertCircle className="h-5 w-5 flex-shrink-0" />
+                    <div>
+                      <strong>Nenhuma API key configurada.</strong>
+                      <p className="text-xs opacity-80">
+                        Você precisa configurar pelo menos uma API key (Google, OpenAI ou Anthropic) em Configurações → IA antes de criar um agente.
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
@@ -443,81 +460,88 @@ export function AIAgentForm({
             </div>
 
             {/* ═══════════════════════════════════════════════════════════════
-                SEÇÃO: Parâmetros Avançados
+                SEÇÃO: Parâmetros Avançados (Colapsável)
             ═══════════════════════════════════════════════════════════════ */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 border-b border-[var(--ds-border-default)] pb-2">
+            <Collapsible>
+              <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border border-[var(--ds-border-default)] bg-[var(--ds-bg-elevated)] px-4 py-3 text-left transition-colors hover:bg-[var(--ds-bg-surface)]">
+                <div className="flex items-center gap-2">
+                  <SlidersHorizontal className="h-4 w-4 text-[var(--ds-text-muted)]" />
+                  <div>
+                    <span className="text-sm font-medium">Parâmetros Avançados</span>
+                    <p className="text-xs text-[var(--ds-text-muted)]">
+                      Criatividade {temperature.toFixed(1)} • Resposta {maxTokens} tokens • Espera {debounceMs / 1000}s
+                    </p>
+                  </div>
+                </div>
                 <SlidersHorizontal className="h-4 w-4 text-[var(--ds-text-muted)]" />
-                <span className="text-sm font-medium text-[var(--ds-text-secondary)]">
-                  Parâmetros Avançados
-                </span>
-              </div>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-3 space-y-4 rounded-lg border border-[var(--ds-border-default)] bg-[var(--ds-bg-elevated)] p-4">
+                {/* Criatividade (Temperature) */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm">Criatividade</Label>
+                    <span className="rounded bg-[var(--ds-bg-surface)] px-2 py-0.5 text-xs font-mono text-[var(--ds-text-secondary)]">
+                      {temperature.toFixed(1)}
+                    </span>
+                  </div>
+                  <Slider
+                    value={[temperature]}
+                    onValueChange={([v]) => setTemperature(v)}
+                    min={0}
+                    max={2}
+                    step={0.1}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-[10px] text-[var(--ds-text-muted)]">
+                    <span>Focado</span>
+                    <span>Criativo</span>
+                  </div>
+                </div>
 
-              {/* Temperature */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm">Temperature</Label>
-                  <span className="rounded bg-[var(--ds-bg-surface)] px-2 py-0.5 text-xs font-mono text-[var(--ds-text-secondary)]">
-                    {temperature.toFixed(1)}
-                  </span>
+                {/* Tamanho da Resposta (Max Tokens) */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm">Tamanho da Resposta</Label>
+                    <span className="rounded bg-[var(--ds-bg-surface)] px-2 py-0.5 text-xs font-mono text-[var(--ds-text-secondary)]">
+                      {maxTokens} tokens
+                    </span>
+                  </div>
+                  <Slider
+                    value={[maxTokens]}
+                    onValueChange={([v]) => setMaxTokens(v)}
+                    min={256}
+                    max={4096}
+                    step={128}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-[10px] text-[var(--ds-text-muted)]">
+                    <span>Curta</span>
+                    <span>Longa</span>
+                  </div>
                 </div>
-                <Slider
-                  value={[temperature]}
-                  onValueChange={([v]) => setTemperature(v)}
-                  min={0}
-                  max={2}
-                  step={0.1}
-                  className="w-full"
-                />
-                <div className="flex justify-between text-[10px] text-[var(--ds-text-muted)]">
-                  <span>Focado</span>
-                  <span>Criativo</span>
-                </div>
-              </div>
 
-              {/* Max Tokens */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm">Max Tokens</Label>
-                  <span className="rounded bg-[var(--ds-bg-surface)] px-2 py-0.5 text-xs font-mono text-[var(--ds-text-secondary)]">
-                    {maxTokens}
-                  </span>
+                {/* Tempo de Espera (Debounce) */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm">Tempo de Espera</Label>
+                    <span className="rounded bg-[var(--ds-bg-surface)] px-2 py-0.5 text-xs font-mono text-[var(--ds-text-secondary)]">
+                      {debounceMs / 1000}s
+                    </span>
+                  </div>
+                  <Slider
+                    value={[debounceMs]}
+                    onValueChange={([v]) => setDebounceMs(v)}
+                    min={1000}
+                    max={15000}
+                    step={1000}
+                    className="w-full"
+                  />
+                  <p className="text-[10px] text-[var(--ds-text-muted)]">
+                    Aguarda o cliente terminar de digitar antes de responder
+                  </p>
                 </div>
-                <Slider
-                  value={[maxTokens]}
-                  onValueChange={([v]) => setMaxTokens(v)}
-                  min={256}
-                  max={4096}
-                  step={128}
-                  className="w-full"
-                />
-                <div className="flex justify-between text-[10px] text-[var(--ds-text-muted)]">
-                  <span>Curto (256)</span>
-                  <span>Longo (4096)</span>
-                </div>
-              </div>
-
-              {/* Debounce */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm">Debounce</Label>
-                  <span className="rounded bg-[var(--ds-bg-surface)] px-2 py-0.5 text-xs font-mono text-[var(--ds-text-secondary)]">
-                    {debounceMs / 1000}s
-                  </span>
-                </div>
-                <Slider
-                  value={[debounceMs]}
-                  onValueChange={([v]) => setDebounceMs(v)}
-                  min={1000}
-                  max={15000}
-                  step={1000}
-                  className="w-full"
-                />
-                <p className="text-[10px] text-[var(--ds-text-muted)]">
-                  Aguarda mensagens consecutivas antes de responder
-                </p>
-              </div>
-            </div>
+              </CollapsibleContent>
+            </Collapsible>
 
             {/* ═══════════════════════════════════════════════════════════════
                 SEÇÃO: Configuração RAG (Knowledge Base)
@@ -867,6 +891,42 @@ export function AIAgentForm({
                   disabled={!bookingPrereqs.ready || bookingPrereqsLoading}
                 />
               </div>
+
+              <div className="flex items-center justify-between border-t border-[var(--ds-border-default)] pt-3">
+                <div>
+                  <Label htmlFor="allowReactions" className="text-sm">
+                    Reações (Emoji)
+                  </Label>
+                  <p className="text-xs text-[var(--ds-text-muted)]">
+                    {allowReactions
+                      ? 'Agente pode reagir com emoji às mensagens'
+                      : 'Agente não envia reações'}
+                  </p>
+                </div>
+                <Switch
+                  id="allowReactions"
+                  checked={allowReactions}
+                  onCheckedChange={setAllowReactions}
+                />
+              </div>
+
+              <div className="flex items-center justify-between border-t border-[var(--ds-border-default)] pt-3">
+                <div>
+                  <Label htmlFor="allowQuotes" className="text-sm">
+                    Citação (Quote)
+                  </Label>
+                  <p className="text-xs text-[var(--ds-text-muted)]">
+                    {allowQuotes
+                      ? 'Agente pode citar mensagens do usuário nas respostas'
+                      : 'Agente não cita mensagens'}
+                  </p>
+                </div>
+                <Switch
+                  id="allowQuotes"
+                  checked={allowQuotes}
+                  onCheckedChange={setAllowQuotes}
+                />
+              </div>
             </div>
           </div>
         </form>
@@ -885,7 +945,7 @@ export function AIAgentForm({
             <Button
               type="submit"
               form="agent-form"
-              disabled={isSubmitting || !name || !systemPrompt}
+              disabled={isSubmitting || !name || !systemPrompt || (isLLMProviderCheckComplete && !hasAvailableLLMProvider)}
             >
               {isSubmitting ? (
                 <>

@@ -411,6 +411,36 @@ export async function getProject(
 }
 
 /**
+ * Desabilita Deployment Protection de um projeto Vercel.
+ * Isso permite que serviços machine-to-machine (como QStash) acessem
+ * a aplicação sem necessidade de bypass token ou headers especiais.
+ */
+export async function disableDeploymentProtection(
+  token: string,
+  projectId: string,
+  teamId?: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await vercelFetch(
+      `/v9/projects/${projectId}`,
+      token,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          // null desabilita completamente o SSO/Deployment Protection
+          ssoProtection: null,
+        }),
+      },
+      teamId
+    );
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao desabilitar Deployment Protection';
+    return { ok: false, error: message };
+  }
+}
+
+/**
  * Encontra um projeto Vercel pelo domínio.
  */
 export async function findProjectByDomain(

@@ -2,9 +2,10 @@
 
 import React from 'react'
 import Image from 'next/image'
-import { Play, ExternalLink, CornerDownLeft, FileText } from 'lucide-react'
+import { Play, ExternalLink, CornerDownLeft, FileText, MapPin } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Container } from '@/components/ui/container'
+import { WhatsAppInlineText } from '@/components/ui/whatsapp-text'
 
 type HeaderFormat = 'TEXT' | 'IMAGE' | 'VIDEO' | 'GIF' | 'DOCUMENT' | 'LOCATION'
 
@@ -20,6 +21,12 @@ type Spec = {
   header?: {
     format?: HeaderFormat
     text?: string
+    location?: {
+      latitude?: string
+      longitude?: string
+      name?: string
+      address?: string
+    }
   } | null
   body?: {
     text?: string
@@ -94,7 +101,30 @@ export function TemplatePreview({ spec, headerMediaPreview }: TemplatePreviewPro
             <div className="p-3">
               <div className="max-w-90 rounded-xl bg-white text-zinc-900 shadow-sm overflow-hidden">
                 <div className="px-3 py-2">
-                {resolvedHeaderMediaPreview ? (
+                {header?.format === 'LOCATION' ? (
+                  <div className="mb-2">
+                    <div className="relative w-full h-24 rounded-lg overflow-hidden bg-gradient-to-br from-emerald-100 to-emerald-200 border border-zinc-200">
+                      {/* Grid pattern to simulate map */}
+                      <div className="absolute inset-0 opacity-20" style={{
+                        backgroundImage: 'linear-gradient(#059669 1px, transparent 1px), linear-gradient(90deg, #059669 1px, transparent 1px)',
+                        backgroundSize: '20px 20px'
+                      }} />
+                      {/* Pin */}
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="flex flex-col items-center">
+                          <MapPin className="w-8 h-8 text-red-500 drop-shadow-md" fill="currentColor" />
+                          <div className="w-2 h-2 bg-red-500/30 rounded-full -mt-1" />
+                        </div>
+                      </div>
+                      {/* Label */}
+                      <div className="absolute bottom-1 left-1 right-1">
+                        <div className="bg-white/90 rounded px-2 py-1 text-[10px] text-zinc-600 text-center truncate">
+                          {header.location?.name || header.location?.address || 'Configure a localização'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : resolvedHeaderMediaPreview ? (
                   <div className="mb-2">
                     {resolvedHeaderMediaPreview.format === 'IMAGE' ? (
                       <Image
@@ -132,12 +162,16 @@ export function TemplatePreview({ spec, headerMediaPreview }: TemplatePreviewPro
                 ) : null}
 
                 <div className="text-[13px] leading-snug whitespace-pre-wrap">
-                  {bodyText || <span className="text-zinc-400">Digite o corpo para ver a previa.</span>}
+                  {bodyText ? (
+                    <WhatsAppInlineText text={bodyText} />
+                  ) : (
+                    <span className="text-zinc-400">Digite o corpo para ver a previa.</span>
+                  )}
                 </div>
 
                 {footerText ? (
                   <div className="mt-1 text-[11px] text-zinc-500 whitespace-pre-wrap">
-                    {footerText}
+                    <WhatsAppInlineText text={footerText} />
                   </div>
                 ) : null}
 

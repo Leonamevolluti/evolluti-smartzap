@@ -5,6 +5,8 @@
  * Sons sintéticos estilo Blade Runner, keep it simple.
  */
 
+const isDev = process.env.NODE_ENV === 'development';
+
 let audioCtx: AudioContext | null = null;
 let ambientAudio: HTMLAudioElement | null = null;
 let ambientPlaying = false;
@@ -156,11 +158,8 @@ export function playClick() {
  */
 export function startAmbient(): void {
   if (ambientPlaying) {
-    console.log('[SoundFX] Ambient already playing, skipping');
     return;
   }
-
-  console.log('[SoundFX] Starting ambient music...');
 
   // Cria elemento de áudio se não existe
   if (!ambientAudio) {
@@ -177,7 +176,6 @@ export function startAmbient(): void {
     playPromise
       .then(() => {
         ambientPlaying = true;
-        console.log('[SoundFX] Audio playing! Starting fade in...');
         // Fade in simples com setInterval
         fadeVolume(ambientAudio!, 0.15, 3000);
       })
@@ -215,8 +213,6 @@ function fadeVolume(audio: HTMLAudioElement, targetVolume: number, duration: num
  */
 export function stopAmbient(): void {
   if (!ambientPlaying || !ambientAudio) return;
-
-  console.log('[SoundFX] Stopping ambient music...');
 
   // Fade out
   fadeVolume(ambientAudio, 0, 2000);

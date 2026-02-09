@@ -134,7 +134,11 @@ Todos devem ser NEUTROS e TRANSACIONAIS.
 - Footer: máximo 60 caracteres
 - Botão: máximo 25 caracteres (verbos neutros: Ver, Acessar, Rastrear)
 - Nome: snake_case, apenas letras minúsculas e underscore
-- 🚫 NUNCA comece ou termine texto com variável
+
+### ⛔ REGRA CRÍTICA - VARIÁVEIS NAS BORDAS (Meta rejeita com erro 2388299):
+- 🚫 "...vence em {{4}}." é ERRADO - a Meta ignora pontuação!
+- ✅ "...vence em {{4}}. Pague em dia." é CERTO - texto após variável
+- Sempre tenha TEXTO SIGNIFICATIVO (não só pontuação) antes/depois das variáveis
 
 ## ⚠️ REGRAS OBRIGATÓRIAS DE HEADER (Meta rejeita se violar)
 - Máximo 60 caracteres

@@ -24,6 +24,20 @@ import {
 
 type FilterTab = 'all' | 'urgent' | 'ai' | 'human'
 
+// Helper para formatar tempo de espera
+function formatWaitTime(dateString: string): string {
+  const date = new Date(dateString)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / (1000 * 60))
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+
+  if (diffMins < 1) return 'agora'
+  if (diffMins < 60) return `há ${diffMins}min`
+  if (diffHours < 24) return `há ${diffHours}h`
+  return 'há +1 dia'
+}
+
 // =============================================================================
 // COMPONENTES - Filter Tabs
 // =============================================================================
@@ -55,7 +69,7 @@ function FilterTabs({
 
   return (
     <div
-      className="flex gap-1.5 px-4 py-3"
+      className="flex gap-1.5 px-4 py-3 overflow-x-auto scrollbar-hide"
       style={{ borderBottom: '1px solid var(--geist-border)' }}
     >
       {tabs.map((tab) => {
@@ -150,18 +164,12 @@ function ConversationItem({
 
         {/* Content */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-2 mb-0.5">
+          <div className="flex items-center gap-2 mb-0.5">
             <span
               className="font-semibold truncate"
               style={{ color: 'var(--geist-foreground)' }}
             >
               {conversation.contactName}
-            </span>
-            <span
-              className="text-xs shrink-0"
-              style={{ color: 'var(--geist-foreground-tertiary)' }}
-            >
-              {formatRelativeTime(conversation.lastMessageAt)}
             </span>
           </div>
 
@@ -190,7 +198,7 @@ function ConversationItem({
             )}
           </div>
 
-          {/* Status badge + AI Agent name - simplified palette */}
+          {/* Status badge - consolidated with AI agent name */}
           <div className="mt-2 flex items-center gap-2">
             <span
               className="text-xs flex items-center gap-1 px-2 py-0.5 rounded-full font-medium"
@@ -210,19 +218,12 @@ function ConversationItem({
               {isUrgent && <AlertCircle size={12} />}
               {isAI && <Sparkles size={12} />}
               {!isUrgent && !isAI && <User size={12} />}
-              {isUrgent ? 'Aguardando humano' : isAI ? 'IA ativa' : 'Atendimento humano'}
+              {isUrgent
+                ? `Aguardando ${formatWaitTime(conversation.lastMessageAt)}`
+                : isAI
+                  ? `${conversation.aiAgentName || 'IA'} · ${formatRelativeTime(conversation.lastMessageAt)}`
+                  : `Humano · ${formatRelativeTime(conversation.lastMessageAt)}`}
             </span>
-            {conversation.aiAgentName && isAI && (
-              <span
-                className="text-xs px-2 py-0.5 rounded-full"
-                style={{
-                  backgroundColor: 'var(--geist-component-bg)',
-                  color: 'var(--geist-foreground-secondary)'
-                }}
-              >
-                {conversation.aiAgentName}
-              </span>
-            )}
           </div>
         </div>
       </div>

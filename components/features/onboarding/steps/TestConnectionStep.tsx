@@ -68,6 +68,8 @@ interface TestConnectionStepProps {
     phoneNumberId: string;
     businessAccountId: string;
     accessToken: string;
+    metaAppId?: string;
+    metaAppSecret?: string;
   };
   onComplete: () => Promise<void>;
   onBack: () => void;
@@ -77,12 +79,24 @@ interface TestConnectionStepProps {
 
 type ValidationStatus = 'idle' | 'loading' | 'success' | 'error' | 'warning';
 
+interface PermissionInfo {
+  scope: string;
+  label: string;
+  present: boolean;
+  critical: boolean;
+}
+
 interface ValidationResult {
   phoneNumberId: ValidationStatus;
   businessAccountId: ValidationStatus;
   accessToken: ValidationStatus;
+  permissions: ValidationStatus;
   displayPhoneNumber?: string;
   verifiedName?: string;
+  permissionDetails?: PermissionInfo[];
+  tokenType?: string;
+  tokenExpiry?: string;
+  isPermanent?: boolean;
 }
 
 export function TestConnectionStep({
@@ -96,9 +110,15 @@ export function TestConnectionStep({
     phoneNumberId: 'idle',
     businessAccountId: 'idle',
     accessToken: 'idle',
+    permissions: 'idle',
   });
   const [isCompleting, setIsCompleting] = useState(false);
   const [errorInfo, setErrorInfo] = useState<{ title: string; description: string } | null>(null);
+
+  // Verifica se temos App Secret para validar permissões
+  const canValidatePermissions = Boolean(
+    credentials.metaAppId?.trim() && credentials.metaAppSecret?.trim()
+  );
 
   useEffect(() => {
     validateCredentials();
@@ -109,6 +129,7 @@ export function TestConnectionStep({
       phoneNumberId: 'loading',
       businessAccountId: 'loading',
       accessToken: 'loading',
+      permissions: canValidatePermissions ? 'loading' : 'idle',
     });
     setErrorInfo(null);
 
@@ -121,13 +142,60 @@ export function TestConnectionStep({
 
       const wabaConfirmed = result.wabaId != null;
 
-      setValidation({
+      // Atualiza conexão básica
+      let newValidation: ValidationResult = {
         phoneNumberId: 'success',
         businessAccountId: wabaConfirmed ? 'success' : 'warning',
         accessToken: 'success',
+        permissions: canValidatePermissions ? 'loading' : 'idle',
         displayPhoneNumber: result.displayPhoneNumber ?? undefined,
         verifiedName: result.verifiedName ?? undefined,
-      });
+      };
+
+      setValidation(newValidation);
+
+      // Se tem App Secret, valida permissões
+      if (canValidatePermissions) {
+        try {
+          const permRes = await fetch('/api/settings/validate-permissions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              accessToken: sanitizeAccessToken(credentials.accessToken),
+              appId: credentials.metaAppId?.trim(),
+              appSecret: credentials.metaAppSecret?.trim(),
+            }),
+          });
+
+          const permData = await permRes.json();
+
+          newValidation = {
+            ...newValidation,
+            permissions: permData.valid ? 'success' : (permData.missing?.length > 0 ? 'warning' : 'error'),
+            permissionDetails: permData.scopeDetails?.map((s: any) => ({
+              scope: s.scope,
+              label: s.label,
+              present: s.present,
+              critical: s.critical,
+            })),
+            tokenType: permData.tokenInfo?.type,
+            tokenExpiry: permData.tokenInfo?.expiresIn,
+            isPermanent: permData.tokenInfo?.isPermanent,
+          };
+
+          setValidation(newValidation);
+
+          if (!permData.valid && permData.missing?.length > 0) {
+            toast.warning('Permissões incompletas', {
+              description: `Faltando: ${permData.missing.join(', ')}`,
+            });
+          }
+        } catch (permError) {
+          // Erro na validação de permissões não bloqueia o fluxo
+          newValidation = { ...newValidation, permissions: 'error' };
+          setValidation(newValidation);
+        }
+      }
     } catch (error: any) {
       const friendlyError = getUserFriendlyError(error);
       setErrorInfo(friendlyError);
@@ -158,24 +226,28 @@ export function TestConnectionStep({
           phoneNumberId: 'success',
           businessAccountId: 'success',
           accessToken: 'error',
+          permissions: 'idle',
         });
       } else if (isPhoneError) {
         setValidation({
           phoneNumberId: 'error',
           businessAccountId: 'success',
           accessToken: 'success',
+          permissions: 'idle',
         });
       } else if (isBusinessError) {
         setValidation({
           phoneNumberId: 'success',
           businessAccountId: 'error',
           accessToken: 'success',
+          permissions: 'idle',
         });
       } else {
         setValidation({
           phoneNumberId: 'idle',
           businessAccountId: 'idle',
           accessToken: 'error',
+          permissions: 'idle',
         });
       }
 
@@ -196,10 +268,17 @@ export function TestConnectionStep({
     }
   };
 
+  // Permissões incompletas são warning (não bloqueiam), mas erro de validação sim
+  const permissionsOk = !canValidatePermissions ||
+    validation.permissions === 'success' ||
+    validation.permissions === 'warning' ||
+    validation.permissions === 'idle';
+
   const allValid =
     validation.phoneNumberId === 'success' &&
     (validation.businessAccountId === 'success' || validation.businessAccountId === 'warning') &&
-    validation.accessToken === 'success';
+    validation.accessToken === 'success' &&
+    permissionsOk;
 
   const StatusIcon = ({ status }: { status: ValidationStatus }) => {
     switch (status) {
@@ -230,7 +309,7 @@ export function TestConnectionStep({
         <p className="text-sm text-zinc-400 mb-3">Status da conexão:</p>
 
         <div className="flex items-center justify-between">
-          <span className="text-zinc-300">Phone Number ID</span>
+          <span className="text-zinc-300">Identificação do número de telefone</span>
           <div className="flex items-center gap-2">
             <StatusIcon status={validation.phoneNumberId} />
             <span className="text-sm text-zinc-400">
@@ -240,7 +319,7 @@ export function TestConnectionStep({
         </div>
 
         <div className="flex items-center justify-between">
-          <span className="text-zinc-300">Business Account ID</span>
+          <span className="text-zinc-300">WABA ID</span>
           <div className="flex items-center gap-2">
             <StatusIcon status={validation.businessAccountId} />
             <span className={`text-sm ${validation.businessAccountId === 'warning' ? 'text-amber-400' : 'text-zinc-400'}`}>
@@ -256,7 +335,7 @@ export function TestConnectionStep({
         </div>
 
         <div className="flex items-center justify-between">
-          <span className="text-zinc-300">Access Token</span>
+          <span className="text-zinc-300">Token de acesso</span>
           <div className="flex items-center gap-2">
             <StatusIcon status={validation.accessToken} />
             <span className="text-sm text-zinc-400">
@@ -268,6 +347,56 @@ export function TestConnectionStep({
             </span>
           </div>
         </div>
+
+        {/* Permissões do token (se App Secret foi fornecido) */}
+        {canValidatePermissions && (
+          <div className="flex items-center justify-between">
+            <span className="text-zinc-300">Permissões do token</span>
+            <div className="flex items-center gap-2">
+              <StatusIcon status={validation.permissions} />
+              <span className={`text-sm ${validation.permissions === 'warning' ? 'text-amber-400' : 'text-zinc-400'}`}>
+                {validation.permissions === 'success'
+                  ? 'completas'
+                  : validation.permissions === 'warning'
+                    ? 'incompletas'
+                    : validation.permissions === 'error'
+                      ? 'erro'
+                      : validation.permissions === 'loading'
+                        ? '...'
+                        : '—'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Detalhes das permissões */}
+        {validation.permissionDetails && validation.permissionDetails.length > 0 && (
+          <div className="pt-2 mt-2 border-t border-zinc-700 space-y-2">
+            <p className="text-xs text-zinc-500 mb-1">Escopos do token:</p>
+            {validation.permissionDetails.map((perm) => (
+              <div key={perm.scope} className="flex items-center justify-between text-sm">
+                <span className="text-zinc-400">{perm.label}</span>
+                <span className={perm.present ? 'text-emerald-400' : 'text-red-400'}>
+                  {perm.present ? '✓' : '✗'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Info do token (tipo e expiração) */}
+        {validation.tokenType && (
+          <div className="pt-2 mt-2 border-t border-zinc-700">
+            <p className="text-xs text-zinc-500">
+              Tipo: <span className="text-zinc-300">{validation.tokenType}</span>
+              {validation.isPermanent ? (
+                <span className="text-emerald-400 ml-2">• Permanente</span>
+              ) : validation.tokenExpiry ? (
+                <span className="text-amber-400 ml-2">• Expira em {validation.tokenExpiry}</span>
+              ) : null}
+            </p>
+          </div>
+        )}
 
         {validation.displayPhoneNumber && (
           <div className="pt-2 mt-2 border-t border-zinc-700">
@@ -345,7 +474,7 @@ export function TestConnectionStep({
           ) : (
             <>
               <PartyPopper className="w-4 h-4 mr-2" />
-              Concluir e ir para o Dashboard
+              Continuar para Webhook
             </>
           )}
         </Button>

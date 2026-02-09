@@ -1,24 +1,34 @@
-import React, { forwardRef, useEffect, useState } from 'react';
-import { HelpCircle, Save, RefreshCw, Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
-import { AppSettings } from '../../../types';
-import type { MetaAppInfo } from './types';
-import { settingsService } from '@/services/settingsService';
-import { Container } from '@/components/ui/container';
-import { SectionHeader } from '@/components/ui/section-header';
+'use client'
+
+import React, { forwardRef, useState, useCallback, useEffect } from 'react'
+import { toast } from 'sonner'
+import { Container } from '@/components/ui/container'
+import { SectionHeader } from '@/components/ui/section-header'
+import { WhatsAppCredentialsForm, type WhatsAppCredentials } from '@/components/shared/WhatsAppCredentialsForm'
+import { settingsService } from '@/services/settingsService'
+import type { AppSettings } from '../../../types'
+import type { MetaAppInfo } from './types'
 
 interface CredentialsFormProps {
-  settings: AppSettings;
-  setSettings: (settings: AppSettings) => void;
-  onSave: () => void;
-  onClose: () => void;
-  isSaving: boolean;
-  onTestConnection?: () => void;
-  isTestingConnection?: boolean;
-  metaApp?: MetaAppInfo | null;
-  refreshMetaApp?: () => void;
+  settings: AppSettings
+  setSettings: (settings: AppSettings) => void
+  onSave: () => void
+  onClose: () => void
+  isSaving: boolean
+  onTestConnection?: () => void
+  isTestingConnection?: boolean
+  metaApp?: MetaAppInfo | null
+  refreshMetaApp?: () => void
 }
 
+/**
+ * Formulário de credenciais WhatsApp para a página de configurações.
+ *
+ * Usa o componente centralizado WhatsAppCredentialsForm e adiciona:
+ * - Container visual com estilo glass
+ * - Integração com o sistema de settings do SmartZap
+ * - Salvamento de Meta App ID junto com credenciais principais
+ */
 export const CredentialsForm = forwardRef<HTMLDivElement, CredentialsFormProps>(
   (
     {
@@ -34,36 +44,79 @@ export const CredentialsForm = forwardRef<HTMLDivElement, CredentialsFormProps>(
     },
     ref
   ) => {
-    // Meta App ID (rapido) - usado para uploads do Template Builder (header_handle)
-    const [metaAppIdQuick, setMetaAppIdQuick] = useState('');
+    const [localIsSaving, setLocalIsSaving] = useState(false)
 
+    // Estado local para Meta App (não faz parte do settings principal)
+    const [metaAppIdLocal, setMetaAppIdLocal] = useState(metaApp?.appId || '')
+    const [metaAppSecretLocal, setMetaAppSecretLocal] = useState('')
+
+    // Sincroniza com metaApp externo
     useEffect(() => {
-      setMetaAppIdQuick(metaApp?.appId || '');
-    }, [metaApp?.appId]);
+      setMetaAppIdLocal(metaApp?.appId || '')
+    }, [metaApp?.appId])
 
+    // Monta os valores para o formulário centralizado
+    const credentialsValues: WhatsAppCredentials = {
+      phoneNumberId: settings.phoneNumberId || '',
+      businessAccountId: settings.businessAccountId || '',
+      accessToken: settings.accessToken || '',
+      metaAppId: metaAppIdLocal,
+      metaAppSecret: metaAppSecretLocal,
+    }
+
+    // Handler para mudança de valores
+    const handleChange = useCallback(
+      (values: WhatsAppCredentials) => {
+        // Atualiza settings principal (phoneNumberId, businessAccountId, accessToken)
+        setSettings({
+          ...settings,
+          phoneNumberId: values.phoneNumberId,
+          businessAccountId: values.businessAccountId,
+          accessToken: values.accessToken,
+        })
+
+        // Atualiza estado local do Meta App
+        setMetaAppIdLocal(values.metaAppId || '')
+        setMetaAppSecretLocal(values.metaAppSecret || '')
+      },
+      [settings, setSettings]
+    )
+
+    // Handler para salvar
     const handleSave = async () => {
       try {
-        await onSave();
-        onClose();
+        setLocalIsSaving(true)
 
-        // Best-effort: salva Meta App ID junto, sem bloquear o salvamento do WhatsApp.
-        const nextAppId = metaAppIdQuick.trim();
-        const currentAppId = String(metaApp?.appId || '').trim();
-        if (nextAppId && nextAppId !== currentAppId) {
+        // Salva credenciais principais
+        await onSave()
+        onClose()
+
+        // Best-effort: salva Meta App ID junto, sem bloquear o salvamento do WhatsApp
+        const nextAppId = metaAppIdLocal.trim()
+        const nextAppSecret = metaAppSecretLocal.trim()
+        const currentAppId = String(metaApp?.appId || '').trim()
+
+        // Se mudou o App ID ou temos um novo secret
+        if (nextAppId && (nextAppId !== currentAppId || nextAppSecret)) {
           settingsService
-            .saveMetaAppConfig({ appId: nextAppId, appSecret: '' })
+            .saveMetaAppConfig({
+              appId: nextAppId,
+              appSecret: nextAppSecret || '', // Mantém vazio se não fornecido
+            })
             .then(() => {
-              refreshMetaApp?.();
+              refreshMetaApp?.()
             })
             .catch((e) => {
-              // Nao bloqueia o fluxo principal.
-              toast.warning(e instanceof Error ? e.message : 'Falha ao salvar Meta App ID');
-            });
+              // Não bloqueia o fluxo principal
+              toast.warning(e instanceof Error ? e.message : 'Falha ao salvar Meta App ID')
+            })
         }
       } catch {
         // Erro já tratado no hook, não fecha o formulário
+      } finally {
+        setLocalIsSaving(false)
       }
-    };
+    }
 
     return (
       <div ref={ref} className="scroll-mt-24">
@@ -72,127 +125,30 @@ export const CredentialsForm = forwardRef<HTMLDivElement, CredentialsFormProps>(
           padding="lg"
           className="animate-in slide-in-from-top-4 duration-300"
         >
-          <SectionHeader
-          title="Configuracao da API"
-          color="brand"
-          showIndicator={true}
-        />
+          <SectionHeader title="Configuração da API" color="brand" showIndicator={true} />
 
-        <div className="mt-6 space-y-6">
-          {/* Phone Number ID */}
-          <div>
-            <label className="block text-sm font-medium text-[var(--ds-text-primary)] mb-2">
-              ID do Numero de Telefone <span className="text-primary-500">*</span>
-            </label>
-            <div className="relative group">
-              <input
-                type="text"
-                value={settings.phoneNumberId}
-                onChange={(e) => setSettings({ ...settings, phoneNumberId: e.target.value })}
-                placeholder="ex: 298347293847"
-                className="w-full px-4 py-3 bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] rounded-xl focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none font-mono text-sm text-[var(--ds-text-primary)] transition-all group-hover:border-[var(--ds-border-strong)]"
-              />
-              <div
-                className="absolute right-4 top-3.5 text-[var(--ds-text-muted)] cursor-help hover:text-[var(--ds-text-primary)] transition-colors"
-                title="Encontrado no Meta Business Manager"
-              >
-                <HelpCircle size={16} />
-              </div>
-            </div>
+          <div className="mt-6">
+            <WhatsAppCredentialsForm
+              values={credentialsValues}
+              onChange={handleChange}
+              onSave={handleSave}
+              showMetaApp={true}
+              showAppSecret={true}
+              hasAppSecretSaved={metaApp?.hasAppSecret ?? false}
+              showValidateButton={true}
+              showSaveButton={true}
+              showTestButton={true}
+              showHelpLink={true}
+              saveButtonText="Salvar Config"
+              isSaving={isSaving || localIsSaving}
+              isTesting={isTestingConnection}
+              variant="default"
+            />
           </div>
-
-          {/* Business Account ID */}
-          <div>
-            <label className="block text-sm font-medium text-[var(--ds-text-primary)] mb-2">
-              ID da Conta Comercial (Business ID) <span className="text-primary-500">*</span>
-            </label>
-            <div className="relative group">
-              <input
-                type="text"
-                value={settings.businessAccountId}
-                onChange={(e) => setSettings({ ...settings, businessAccountId: e.target.value })}
-                placeholder="ex: 987234987234"
-                className="w-full px-4 py-3 bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] rounded-xl focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none font-mono text-sm text-[var(--ds-text-primary)] transition-all group-hover:border-[var(--ds-border-strong)]"
-              />
-              <div
-                className="absolute right-4 top-3.5 text-[var(--ds-text-muted)] cursor-help hover:text-[var(--ds-text-primary)] transition-colors"
-                title="Encontrado no Meta Business Manager"
-              >
-                <HelpCircle size={16} />
-              </div>
-            </div>
-          </div>
-
-          {/* Access Token */}
-          <div>
-            <label className="block text-sm font-medium text-[var(--ds-text-primary)] mb-2">
-              Token de Acesso do Usuario do Sistema <span className="text-primary-500">*</span>
-            </label>
-            <div className="relative group">
-              <input
-                type="password"
-                value={settings.accessToken}
-                onChange={(e) => setSettings({ ...settings, accessToken: e.target.value })}
-                placeholder="EAAG........"
-                className="w-full px-4 py-3 bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] rounded-xl focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none font-mono text-sm text-[var(--ds-text-primary)] transition-all group-hover:border-[var(--ds-border-strong)] tracking-widest"
-              />
-            </div>
-            <p className="text-xs text-[var(--ds-text-muted)] mt-2 font-mono">Armazenamento criptografado SHA-256.</p>
-          </div>
-
-          {/* Meta App ID (Optional) */}
-          <div>
-            <label className="block text-sm font-medium text-[var(--ds-text-primary)] mb-2">
-              Meta App ID <span className="text-[var(--ds-text-muted)]">(opcional)</span>
-            </label>
-            <div className="relative group">
-              <input
-                type="text"
-                value={metaAppIdQuick}
-                onChange={(e) => setMetaAppIdQuick(e.target.value)}
-                placeholder="ex: 123456789012345"
-                className="w-full px-4 py-3 bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] rounded-xl focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none font-mono text-sm text-[var(--ds-text-primary)] transition-all group-hover:border-[var(--ds-border-strong)]"
-              />
-              <div
-                className="absolute right-4 top-3.5 text-[var(--ds-text-muted)] cursor-help hover:text-[var(--ds-text-primary)] transition-colors"
-                title="Necessario para upload de midia no header do Template Builder (Resumable Upload API)."
-              >
-                <HelpCircle size={16} />
-              </div>
-            </div>
-            <p className="text-xs text-[var(--ds-text-muted)] mt-2">
-              Usado apenas para gerar <span className="font-mono">header_handle</span> (upload de
-              imagem/video/documento/GIF) no Template Builder.
-            </p>
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="mt-10 pt-8 border-t border-[var(--ds-border-subtle)] flex justify-end gap-4">
-          <button
-            className="h-10 px-6 rounded-xl border border-[var(--ds-border-default)] text-[var(--ds-text-primary)] font-medium hover:bg-[var(--ds-bg-hover)] transition-colors flex items-center gap-2"
-            onClick={() => onTestConnection?.()}
-            disabled={!!isTestingConnection}
-          >
-            {isTestingConnection ? (
-              <Loader2 size={18} className="animate-spin" />
-            ) : (
-              <RefreshCw size={18} />
-            )}
-            {isTestingConnection ? 'Testando...' : 'Testar Conexao'}
-          </button>
-          <button
-            className="h-10 px-8 rounded-xl bg-primary-600 text-white font-bold hover:bg-primary-500 dark:bg-white dark:text-black dark:hover:bg-neutral-100 transition-colors flex items-center gap-2 shadow-[var(--ds-shadow-lg)]"
-            onClick={handleSave}
-            disabled={isSaving}
-          >
-            <Save size={18} /> {isSaving ? 'Salvando...' : 'Salvar Config'}
-          </button>
-        </div>
-      </Container>
+        </Container>
       </div>
-    );
+    )
   }
-);
+)
 
-CredentialsForm.displayName = 'CredentialsForm';
+CredentialsForm.displayName = 'CredentialsForm'

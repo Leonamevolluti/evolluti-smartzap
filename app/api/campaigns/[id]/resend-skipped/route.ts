@@ -534,6 +534,38 @@ export async function POST(_request: Request, { params }: Params) {
       console.warn('[ResendSkipped] Falha ao atualizar contador de skipped na campanha (best-effort):', e)
     }
 
+    // Recalcular total_recipients (exclui skipped) para manter UI consistente
+    try {
+      const [{ count: totalCount, error: totalErr }, { count: skippedCount, error: skippedErr }] = await Promise.all([
+        supabase
+          .from('campaign_contacts')
+          .select('id', { count: 'exact', head: true })
+          .eq('campaign_id', campaignId),
+        supabase
+          .from('campaign_contacts')
+          .select('id', { count: 'exact', head: true })
+          .eq('campaign_id', campaignId)
+          .eq('status', 'skipped'),
+      ])
+
+      if (totalErr) throw totalErr
+      if (skippedErr) throw skippedErr
+
+      const updateCampaign: Record<string, unknown> = { updated_at: nowIso }
+      if (typeof totalCount === 'number') {
+        const skippedSafe = typeof skippedCount === 'number' ? skippedCount : 0
+        updateCampaign.total_recipients = Math.max(0, totalCount - skippedSafe)
+      }
+      if (typeof skippedCount === 'number') updateCampaign.skipped = skippedCount
+
+      await supabase
+        .from('campaigns')
+        .update(updateCampaign)
+        .eq('id', campaignId)
+    } catch (e) {
+      console.warn('[ResendSkipped] Falha ao recalcular total_recipients (best-effort):', e)
+    }
+
     // 5) Se ninguém ficou válido, não enfileira
     if (validForResend.length === 0) {
       return NextResponse.json(

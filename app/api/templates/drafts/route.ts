@@ -21,6 +21,37 @@ function deriveContentFromSpec(spec: any): string {
   return ''
 }
 
+/**
+ * Gera um nome único para o template, adicionando sufixo _2, _3, etc. se necessário
+ */
+async function generateUniqueName(baseName: string, language: string): Promise<string> {
+  // Verificar se já existe um template com esse nome e idioma
+  const { data: existing } = await supabase
+    .from('templates')
+    .select('name')
+    .eq('language', language)
+    .like('name', `${baseName}%`)
+
+  if (!existing || existing.length === 0) {
+    return baseName
+  }
+
+  const existingNames = new Set(existing.map((t) => t.name))
+
+  // Se o nome base não existe, usar ele
+  if (!existingNames.has(baseName)) {
+    return baseName
+  }
+
+  // Incrementar sufixo até achar um nome livre
+  let counter = 2
+  while (existingNames.has(`${baseName}_${counter}`)) {
+    counter++
+  }
+
+  return `${baseName}_${counter}`
+}
+
 export async function GET() {
   try {
     // Tentativa 1: com filtro de source
@@ -101,9 +132,12 @@ export async function POST(request: NextRequest) {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
 
+    // Gerar nome único para evitar conflitos
+    const uniqueName = await generateUniqueName(parsed.name, parsed.language)
+
     // Spec (compatível com CreateTemplateSchema/TemplateService)
     const spec = {
-      name: parsed.name,
+      name: uniqueName,
       language: parsed.language,
       category: parsed.category,
       parameter_format: parsed.parameterFormat,
@@ -120,7 +154,7 @@ export async function POST(request: NextRequest) {
       .from('templates')
       .insert({
         id,
-        name: parsed.name,
+        name: uniqueName,
         language: parsed.language,
         category: parsed.category,
         status: 'DRAFT',
@@ -148,7 +182,7 @@ export async function POST(request: NextRequest) {
         .from('templates')
         .insert({
           id,
-          name: parsed.name,
+          name: uniqueName,
           language: parsed.language,
           category: parsed.category,
           status: 'DRAFT',

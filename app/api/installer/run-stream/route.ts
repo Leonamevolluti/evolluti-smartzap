@@ -210,9 +210,10 @@ export async function POST(req: Request) {
 
   // Determine which steps to skip based on health check
   const skippedSteps: string[] = [];
+  const shouldWaitStorage = process.env.SMARTZAP_WAIT_STORAGE === 'true';
   if (healthCheck?.skipWaitProject) skippedSteps.push('wait_project');
-  // SmartZap NÃO usa Supabase Storage - sempre pular wait_storage
-  skippedSteps.push('wait_storage');
+  if (!shouldWaitStorage) skippedSteps.push('wait_storage');
+  if (shouldWaitStorage && healthCheck?.skipWaitStorage) skippedSteps.push('wait_storage');
   if (healthCheck?.skipMigrations) skippedSteps.push('migrations');
   if (healthCheck?.skipBootstrap) skippedSteps.push('bootstrap');
 
@@ -345,6 +346,9 @@ export async function POST(req: Request) {
 
         // Auth
         { key: 'MASTER_PASSWORD', value: admin.passwordHash, targets: envTargets },
+
+        // API Key para acesso programático
+        { key: 'SMARTZAP_API_KEY', value: `szap_${crypto.randomUUID().replace(/-/g, '')}`, targets: envTargets },
 
         // Setup flag (para isSetupComplete() retornar true em produção)
         { key: 'SETUP_COMPLETE', value: 'true', targets: envTargets },
@@ -482,6 +486,17 @@ export async function POST(req: Request) {
         );
         vercelDeploymentId = redeploy.deploymentId;
       } catch (err) {
+        try {
+          console.warn('[run-stream] Redeploy falhou, reabilitando installer...');
+          await upsertProjectEnvs(
+            vercel.token,
+            vercel.projectId,
+            [{ key: 'INSTALLER_ENABLED', value: 'true', targets: envTargets }],
+            vercel.teamId || undefined
+          );
+        } catch (rollbackErr) {
+          console.error('[run-stream] Falha ao reabilitar installer após erro no redeploy:', rollbackErr);
+        }
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(
           'Falha ao iniciar redeploy na Vercel. ' +

@@ -12,6 +12,12 @@ export interface WizardState {
     header: string[];
     body: string[];
     buttons?: Record<string, string>;
+    headerLocation?: {
+      latitude: string;
+      longitude: string;
+      name: string;
+      address: string;
+    };
   };
 }
 

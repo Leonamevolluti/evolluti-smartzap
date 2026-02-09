@@ -295,6 +295,7 @@ export const templateService = {
 
   // Upload de mídia para header de template (retorna header_handle)
   uploadHeaderMedia: async (file: File, format: string): Promise<{ handle: string }> => {
+    // Usar FormData (padrão da indústria para uploads de arquivos)
     const fd = new FormData();
     fd.set('file', file);
     fd.set('format', format);
@@ -306,7 +307,24 @@ export const templateService = {
 
     const data = await response.json().catch(() => null);
     if (!response.ok) {
-      const msg = String(data?.error || data?.message || 'Falha ao enviar mídia');
+      // Capturar detalhes do erro para debugging
+      const errorMsg = data?.error || data?.message || '';
+      const errorDetails = data?.details?.message || (typeof data?.details === 'string' ? data.details : '');
+      const statusText = response.statusText || '';
+
+      let msg = String(errorMsg || 'Falha ao enviar mídia');
+
+      // Se tiver detalhes adicionais, incluir
+      if (errorDetails && !msg.includes(String(errorDetails))) {
+        msg += ` (${errorDetails})`;
+      }
+
+      // Se não tiver mensagem mas tiver status, incluir
+      if (!errorMsg && statusText) {
+        msg = `Falha ao enviar mídia: ${statusText} (${response.status})`;
+      }
+
+      console.error('[uploadHeaderMedia] Erro:', { status: response.status, data });
       throw new Error(msg);
     }
 

@@ -15,7 +15,8 @@ import { generateText as vercelGenerateText, streamText as vercelStreamText } fr
 
 import { supabase } from '@/lib/supabase';
 import { type AIProvider, getDefaultModel } from './providers';
-import { getAiFallbackConfig } from './ai-center-config';
+import { getAiFallbackConfig, getAiGatewayConfig } from './ai-center-config';
+import { toGatewayModelId, type AiGatewayConfig } from './ai-center-defaults';
 
 // =============================================================================
 // TYPES
@@ -159,23 +160,106 @@ export function clearSettingsCache() {
 // Dynamic imports for better code splitting
 // =============================================================================
 
-async function getLanguageModel(providerId: AIProvider, modelId: string, apiKey: string) {
+const AI_GATEWAY_BASE_URL = 'https://ai-gateway.vercel.sh/v1';
+
+interface LanguageModelResult {
+    model: ReturnType<typeof import('@ai-sdk/google').createGoogleGenerativeAI> extends (id: string) => infer R ? R : never;
+    gatewayEnabled: boolean;
+    gatewayConfig?: AiGatewayConfig;
+}
+
+async function getLanguageModel(
+    providerId: AIProvider,
+    modelId: string,
+    apiKey: string,
+    settings?: AISettings
+): Promise<LanguageModelResult> {
     if (!apiKey) {
         throw new MissingAIKeyError(providerId);
     }
 
+    // Verifica se AI Gateway está habilitado
+    const gatewayConfig = await getAiGatewayConfig();
+
+    // Gateway requer OIDC token (disponível em Vercel ou via `vercel dev`)
+    const oidcToken = process.env.VERCEL_OIDC_TOKEN;
+    if (gatewayConfig.enabled) {
+        console.log(`[AI Service] VERCEL_OIDC_TOKEN ${oidcToken ? 'present' : 'missing'}`);
+    }
+    const canUseGateway = gatewayConfig.enabled && oidcToken;
+
+    if (gatewayConfig.enabled && !oidcToken) {
+        console.warn('[AI Service] Gateway habilitado mas VERCEL_OIDC_TOKEN não encontrado. Usando conexão direta.');
+    }
+
+    if (canUseGateway) {
+        // Usa AI Gateway para routing inteligente
+        const { createOpenAI } = await import('@ai-sdk/openai');
+
+        const gatewayModelId = toGatewayModelId(providerId, modelId);
+
+        // Headers para o Gateway
+        const headers: Record<string, string> = {
+            // Token OIDC para autenticação no Gateway
+            Authorization: `Bearer ${oidcToken}`,
+        };
+
+        // BYOK: passa a chave do provider se configurado
+        if (gatewayConfig.useBYOK && apiKey) {
+            const byokHeaderMap: Record<AIProvider, string> = {
+                google: 'x-google-api-key',
+                openai: 'x-openai-api-key',
+                anthropic: 'x-anthropic-api-key',
+            };
+            headers[byokHeaderMap[providerId]] = apiKey;
+
+            // Também adiciona chaves dos outros providers para fallback BYOK
+            if (settings?.providerKeys) {
+                for (const [prov, key] of Object.entries(settings.providerKeys)) {
+                    if (key && prov !== providerId) {
+                        headers[byokHeaderMap[prov as AIProvider]] = key;
+                    }
+                }
+            }
+        }
+
+        const openai = createOpenAI({
+            apiKey: 'dummy', // Não usado, autenticação via OIDC
+            baseURL: AI_GATEWAY_BASE_URL,
+            headers,
+        });
+
+        console.log(`[AI Service] AI Gateway enabled: ${gatewayModelId}`);
+
+        return {
+            model: openai(gatewayModelId),
+            gatewayEnabled: true,
+            gatewayConfig,
+        };
+    }
+
+    // Fallback: conexão direta
     switch (providerId) {
         case 'google': {
             const { createGoogleGenerativeAI } = await import('@ai-sdk/google');
-            return createGoogleGenerativeAI({ apiKey })(modelId);
+            return {
+                model: createGoogleGenerativeAI({ apiKey })(modelId),
+                gatewayEnabled: false,
+            };
         }
         case 'openai': {
             const { createOpenAI } = await import('@ai-sdk/openai');
-            return createOpenAI({ apiKey })(modelId);
+            return {
+                model: createOpenAI({ apiKey })(modelId),
+                gatewayEnabled: false,
+            };
         }
         case 'anthropic': {
             const { createAnthropic } = await import('@ai-sdk/anthropic');
-            return createAnthropic({ apiKey })(modelId);
+            return {
+                model: createAnthropic({ apiKey })(modelId),
+                gatewayEnabled: false,
+            };
         }
         default:
             throw new Error(`Unknown provider: ${providerId}`);
@@ -192,6 +276,9 @@ async function getLanguageModel(providerId: AIProvider, modelId: string, apiKey:
  * Você pode fornecer `prompt` (simples) ou `messages` (chat). Se ambos forem
  * fornecidos, `messages` tem precedência pela lógica atual.
  *
+ * Quando o AI Gateway está habilitado, usa providerOptions.gateway.models
+ * para fallbacks automáticos gerenciados pelo Gateway.
+ *
  * @param options Opções de geração (prompt/mensagens, system, temperatura, etc.).
  * @returns Objeto com `text` e metadados do provedor/modelo efetivamente usados.
  */
@@ -201,31 +288,50 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
     const providerId = options.provider || settings.provider;
     const modelId = options.model || settings.model;
 
-    const runGeneration = async (provider: AIProvider, modelIdOverride: string, apiKey: string) => {
-        const model = await getLanguageModel(provider, modelIdOverride, apiKey);
+    // Obtém o modelo (pode ser via Gateway ou direto)
+    const { model, gatewayEnabled, gatewayConfig } = await getLanguageModel(
+        providerId,
+        modelId,
+        settings.apiKey,
+        settings
+    );
 
-        console.log(`[AI Service] Generating with ${provider}/${modelIdOverride}`);
+    console.log(`[AI Service] Generating with ${providerId}/${modelId}${gatewayEnabled ? ' (via Gateway)' : ''}`);
 
-        const baseOptions = {
-            model,
-            system: options.system,
-            temperature: options.temperature ?? 0.7,
-            ...(options.maxOutputTokens && { maxOutputTokens: options.maxOutputTokens }),
-        };
-
-        return options.messages
-            ? vercelGenerateText({ ...baseOptions, messages: options.messages })
-            : vercelGenerateText({ ...baseOptions, prompt: options.prompt || '' });
+    // Constrói opções base
+    const baseOptions: Omit<Parameters<typeof vercelGenerateText>[0], 'prompt' | 'messages'> = {
+        model,
+        system: options.system,
+        temperature: options.temperature ?? 0.7,
+        ...(options.maxOutputTokens && { maxOutputTokens: options.maxOutputTokens }),
     };
 
+    // Se Gateway habilitado, adiciona providerOptions para fallbacks automáticos
+    if (gatewayEnabled && gatewayConfig?.fallbackModels?.length) {
+        baseOptions.providerOptions = {
+            gateway: {
+                models: gatewayConfig.fallbackModels,
+            },
+        };
+    }
+
     try {
-        const result = await runGeneration(providerId, modelId, settings.apiKey);
+        const result = options.messages
+            ? await vercelGenerateText({ ...baseOptions, messages: options.messages })
+            : await vercelGenerateText({ ...baseOptions, prompt: options.prompt || '' });
+
         return {
             text: result.text,
             provider: providerId,
             model: modelId,
         };
     } catch (error) {
+        // Se Gateway habilitado, ele já tentou os fallbacks - não tenta de novo
+        if (gatewayEnabled) {
+            throw error;
+        }
+
+        // Fallback manual (quando Gateway desabilitado)
         const fallback = await getAiFallbackConfig();
         if (!fallback.enabled) {
             throw error;
@@ -247,7 +353,19 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
 
             try {
                 console.warn(`[AI Service] Primary failed, falling back to ${provider}/${fallbackModel}`);
-                const fallbackResult = await runGeneration(provider, fallbackModel, fallbackKey);
+                const { model: fallbackModelInstance } = await getLanguageModel(provider, fallbackModel, fallbackKey);
+
+                const fallbackOptions = {
+                    model: fallbackModelInstance,
+                    system: options.system,
+                    temperature: options.temperature ?? 0.7,
+                    ...(options.maxOutputTokens && { maxOutputTokens: options.maxOutputTokens }),
+                };
+
+                const fallbackResult = options.messages
+                    ? await vercelGenerateText({ ...fallbackOptions, messages: options.messages })
+                    : await vercelGenerateText({ ...fallbackOptions, prompt: options.prompt || '' });
+
                 return {
                     text: fallbackResult.text,
                     provider,
@@ -268,6 +386,9 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
  * Durante o streaming, chama `onChunk` para cada pedaço de texto e `onComplete`
  * ao finalizar, além de retornar o texto completo.
  *
+ * Quando o AI Gateway está habilitado, usa providerOptions.gateway.models
+ * para fallbacks automáticos gerenciados pelo Gateway.
+ *
  * @param options Opções de streaming (inclui callbacks opcionais).
  * @returns Objeto com o texto completo e metadados do provedor/modelo.
  */
@@ -277,17 +398,32 @@ export async function streamText(options: StreamTextOptions): Promise<GenerateTe
     const providerId = options.provider || settings.provider;
     const modelId = options.model || settings.model;
 
-    const model = await getLanguageModel(providerId, modelId, settings.apiKey);
+    // Obtém o modelo (pode ser via Gateway ou direto)
+    const { model, gatewayEnabled, gatewayConfig } = await getLanguageModel(
+        providerId,
+        modelId,
+        settings.apiKey,
+        settings
+    );
 
-    console.log(`[AI Service] Streaming with ${providerId}/${modelId}`);
+    console.log(`[AI Service] Streaming with ${providerId}/${modelId}${gatewayEnabled ? ' (via Gateway)' : ''}`);
 
     // Build call options based on prompt vs messages
-    const baseOptions = {
+    const baseOptions: Omit<Parameters<typeof vercelStreamText>[0], 'prompt' | 'messages'> = {
         model,
         system: options.system,
         temperature: options.temperature ?? 0.7,
         ...(options.maxOutputTokens && { maxOutputTokens: options.maxOutputTokens }),
     };
+
+    // Se Gateway habilitado, adiciona providerOptions para fallbacks automáticos
+    if (gatewayEnabled && gatewayConfig?.fallbackModels?.length) {
+        baseOptions.providerOptions = {
+            gateway: {
+                models: gatewayConfig.fallbackModels,
+            },
+        };
+    }
 
     const result = options.messages
         ? vercelStreamText({ ...baseOptions, messages: options.messages })

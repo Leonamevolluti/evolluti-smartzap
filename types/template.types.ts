@@ -109,7 +109,9 @@ export interface TemplateButton {
 }
 
 /**
- * All supported button types in WhatsApp templates.
+ * Tipos de botão suportados pela Meta API para templates de mensagem.
+ * Nota: Tipos como CATALOG, MPM, VOICE_CALL, etc. NÃO são suportados pela Meta
+ * para templates e foram removidos.
  */
 export type TemplateButtonType =
   | 'QUICK_REPLY'
@@ -117,16 +119,7 @@ export type TemplateButtonType =
   | 'PHONE_NUMBER'
   | 'COPY_CODE'
   | 'OTP'
-  | 'FLOW'
-  | 'CATALOG'
-  | 'MPM'
-  | 'VOICE_CALL'
-  | 'EXTENSION'
-  | 'ORDER_DETAILS'
-  | 'POSTBACK'
-  | 'REMINDER'
-  | 'SEND_LOCATION'
-  | 'SPM';
+  | 'FLOW';
 
 // =============================================================================
 // GENERATED TEMPLATE TYPES

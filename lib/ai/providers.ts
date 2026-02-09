@@ -29,8 +29,9 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
         name: 'Google (Gemini)',
         icon: '💎',
         models: [
+            // Flash primeiro = default (mais rápido e barato)
+            { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', description: 'Rápido e responsivo (preview) - RECOMENDADO' },
             { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', description: 'Modelo mais avançado (preview)' },
-            { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', description: 'Rápido e responsivo (preview)' },
             { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'Melhor para tarefas complexas' },
             { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', description: 'Rápido e eficiente' },
             { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', description: 'Ultra-rápido, baixo custo' },

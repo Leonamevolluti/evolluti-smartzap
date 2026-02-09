@@ -555,7 +555,7 @@ export const useCampaignWizardController = () => {
         templateName: selectedTemplate.name,
         contacts: contactsForSending,
         templateVariables:
-          (templateVariables.header.length > 0 || templateVariables.body.length > 0 || (templateVariables.buttons && Object.keys(templateVariables.buttons).length > 0))
+          (templateVariables.header.length > 0 || templateVariables.body.length > 0 || (templateVariables.buttons && Object.keys(templateVariables.buttons).length > 0) || templateVariables.headerLocation?.latitude)
             ? templateVariables
             : undefined,
       });
@@ -679,7 +679,7 @@ export const useCampaignWizardController = () => {
       selectedContacts: contactsForSending,
       selectedContactIds: recipientSource === 'test' ? [] : selectedContactIds, // Save for resume functionality
       scheduledAt: scheduleTime || scheduledAt || undefined, // Use provided time or state
-      templateVariables: (templateVariables.header.length > 0 || templateVariables.body.length > 0) ? templateVariables : undefined,
+      templateVariables: (templateVariables.header.length > 0 || templateVariables.body.length > 0 || templateVariables.headerLocation?.latitude) ? templateVariables : undefined,
     });
   };
 

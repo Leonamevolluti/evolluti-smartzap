@@ -5,6 +5,7 @@
  */
 
 import { supabase } from './supabase'
+import { redis } from './redis'
 import {
     Campaign,
     Contact,
@@ -926,6 +927,18 @@ export const contactDb = {
 
         if (error) throw error
 
+        // Se o status foi alterado para OPT_IN, desativa a supressão automática
+        if (data.status === ContactStatus.OPT_IN) {
+            const contact = await contactDb.getById(id)
+            if (contact?.phone) {
+                await supabase
+                    .from('phone_suppressions')
+                    .update({ is_active: false })
+                    .eq('phone', contact.phone)
+            }
+            return contact
+        }
+
         return contactDb.getById(id)
     },
 
@@ -1456,8 +1469,20 @@ export const templateDb = {
         if (error) throw error
 
         return (data || []).map(row => {
-            const components = normalizeTemplateComponents(row.components)
+            let components = normalizeTemplateComponents(row.components)
             const bodyText = getTemplateBodyText(components, row.components)
+
+            // Injetar header_location no component HEADER se existir
+            const headerLocation = (row as any).header_location
+            if (headerLocation && typeof headerLocation === 'object') {
+                components = components.map(c => {
+                    if (c.type === 'HEADER' && c.format === 'LOCATION') {
+                        return { ...c, location: headerLocation }
+                    }
+                    return c
+                })
+            }
+
             return {
                 id: row.id,
                 name: row.name,
@@ -1488,8 +1513,20 @@ export const templateDb = {
 
         if (error || !data) return undefined
 
-        const components = normalizeTemplateComponents(data.components)
+        let components = normalizeTemplateComponents(data.components)
         const bodyText = getTemplateBodyText(components, data.components)
+
+        // Injetar header_location no component HEADER se existir
+        const headerLocation = (data as any).header_location
+        if (headerLocation && typeof headerLocation === 'object') {
+            components = components.map(c => {
+                if (c.type === 'HEADER' && c.format === 'LOCATION') {
+                    return { ...c, location: headerLocation }
+                }
+                return c
+            })
+        }
+
         return {
             id: data.id,
             name: data.name,
@@ -1651,8 +1688,37 @@ export const customFieldDefDb = {
 // SETTINGS
 // ============================================================================
 
+/**
+ * Settings Database com Cache Redis
+ *
+ * OTIMIZAÇÃO V2 (2026-01-26):
+ * - Cache em Redis com TTL de 60s para evitar queries repetidas
+ * - Fallback transparente se Redis não estiver configurado
+ * - Invalidação automática no set()
+ *
+ * Performance: ~100x mais rápido (Redis: ~1ms vs Supabase: ~100ms)
+ */
+const SETTINGS_CACHE_PREFIX = 'settings:'
+const SETTINGS_CACHE_TTL = 60 // segundos
+
 export const settingsDb = {
     get: async (key: string): Promise<string | null> => {
+        const cacheKey = `${SETTINGS_CACHE_PREFIX}${key}`
+
+        // 1. Tenta buscar do cache Redis
+        if (redis) {
+            try {
+                const cached = await redis.get<string>(cacheKey)
+                if (cached !== null) {
+                    return cached
+                }
+            } catch (e) {
+                // Redis error - fallback silencioso para DB
+                console.warn('[settingsDb] Redis read error:', e)
+            }
+        }
+
+        // 2. Busca do Supabase
         const { data, error } = await supabase
             .from('settings')
             .select('value')
@@ -1660,6 +1726,17 @@ export const settingsDb = {
             .single()
 
         if (error || !data) return null
+
+        // 3. Armazena no cache para próximas requisições
+        if (redis && data.value) {
+            try {
+                await redis.set(cacheKey, data.value, { ex: SETTINGS_CACHE_TTL })
+            } catch (e) {
+                // Ignore cache write errors
+                console.warn('[settingsDb] Redis write error:', e)
+            }
+        }
+
         return data.value
     },
 
@@ -1675,6 +1752,17 @@ export const settingsDb = {
             }, { onConflict: 'key' })
 
         if (error) throw error
+
+        // Invalida cache após update
+        if (redis) {
+            try {
+                const cacheKey = `${SETTINGS_CACHE_PREFIX}${key}`
+                await redis.del(cacheKey)
+            } catch (e) {
+                // Ignore cache invalidation errors
+                console.warn('[settingsDb] Redis del error:', e)
+            }
+        }
     },
 
     getAll: async (): Promise<AppSettings> => {
@@ -1824,6 +1912,8 @@ export const templateProjectDb = {
                 status: dto.status || 'draft',
                 // Discriminador para separar Manual vs IA (default seguro)
                 source: (dto as any).source || 'ai',
+                // Estratégia usada: marketing, utility, bypass
+                strategy: dto.strategy || 'utility',
                 template_count: dto.items.length,
                 approved_count: 0
                 // user_id is explicitly NOT set here, relying on schema default (null) or logic in API route if needed

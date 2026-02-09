@@ -22,7 +22,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   try {
     const { data, error } = await supabase
       .from('templates')
-      .select('id,name,language,category,status,updated_at,created_at,parameter_format,components')
+      .select('id,name,language,category,status,updated_at,created_at,parameter_format,components,header_location')
       .eq('id', id)
       .limit(1)
 
@@ -37,6 +37,18 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       return NextResponse.json({ error: 'Rascunho não encontrado' }, { status: 404 })
     }
 
+    // Se tiver header_location salvo, injetar no spec.header para o builder carregar
+    let spec = row.components
+    if (row.header_location && spec?.header?.format === 'LOCATION') {
+      spec = {
+        ...spec,
+        header: {
+          ...spec.header,
+          location: row.header_location,
+        },
+      }
+    }
+
     return NextResponse.json({
       id: row.id,
       name: row.name,
@@ -45,7 +57,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       status: row.status || 'DRAFT',
       updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
       parameterFormat: (row as any).parameter_format || undefined,
-      spec: row.components,
+      spec,
     })
   } catch (error) {
     return NextResponse.json(
@@ -62,12 +74,47 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     const patch = PatchDraftSchema.parse(json)
     const now = new Date().toISOString()
 
+    // Extrai campos do spec se não estiverem no nível raiz
+    // O frontend envia tudo dentro de spec, mas o DB espera no nível raiz
+    const specObj = patch.spec && typeof patch.spec === 'object' ? (patch.spec as Record<string, unknown>) : null
+    const nameFromSpec = specObj?.name as string | undefined
+    const languageFromSpec = specObj?.language as string | undefined
+    const categoryFromSpec = specObj?.category as string | undefined
+    const paramFormatFromSpec = specObj?.parameter_format as string | undefined
+
+    // Extrair header.location do spec para salvar em coluna separada (não é sobrescrito pelo sync da Meta)
+    const headerObj = specObj?.header as Record<string, unknown> | undefined
+    const headerLocation = headerObj?.location as { latitude: string; longitude: string; name?: string; address?: string } | undefined
+
     const update: Record<string, unknown> = { updated_at: now }
-    if (patch.name) update.name = patch.name
-    if (patch.language) update.language = patch.language
-    if (patch.category) update.category = patch.category
-    if (patch.parameterFormat) (update as any).parameter_format = patch.parameterFormat
-    if (patch.spec !== undefined) update.components = patch.spec
+    if (patch.name || nameFromSpec) update.name = patch.name || nameFromSpec
+    if (patch.language || languageFromSpec) update.language = patch.language || languageFromSpec
+    if (patch.category || categoryFromSpec) update.category = patch.category || categoryFromSpec
+    if (patch.parameterFormat || paramFormatFromSpec) (update as any).parameter_format = patch.parameterFormat || paramFormatFromSpec
+
+    // Preparar components para salvar (remover header.location que vai em coluna separada)
+    if (patch.spec !== undefined) {
+      let componentsToSave = patch.spec
+      // Se tem header.location, criar cópia sem ele para evitar enviar para Meta na submissão
+      if (headerLocation && headerLocation.latitude && headerLocation.longitude && specObj?.header) {
+        const { location: _ignored, ...headerWithoutLocation } = headerObj as Record<string, unknown>
+        componentsToSave = {
+          ...specObj,
+          header: headerWithoutLocation,
+        }
+      }
+      update.components = componentsToSave
+    }
+
+    // Salvar header_location separadamente para não ser perdido no sync da Meta
+    if (headerLocation && headerLocation.latitude && headerLocation.longitude) {
+      update.header_location = {
+        latitude: String(headerLocation.latitude),
+        longitude: String(headerLocation.longitude),
+        name: String(headerLocation.name || ''),
+        address: String(headerLocation.address || ''),
+      }
+    }
 
     // Tentativa 1 (schema novo)
     const attempt1 = await supabase

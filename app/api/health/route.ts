@@ -289,7 +289,8 @@ export async function GET() {
 
   return NextResponse.json(result, {
     headers: {
-      'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60',
+      // Health check não deve ser cacheado - precisa refletir estado real
+      'Cache-Control': 'private, no-store, max-age=0',
     },
   })
 }

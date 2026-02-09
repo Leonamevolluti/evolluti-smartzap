@@ -210,6 +210,12 @@ export const useSettingsController = () => {
     isLoading: allSettingsQuery.isLoading,
   };
 
+  // Upstash Config - derived from consolidated query
+  const upstashConfigQuery = {
+    data: allSettingsQuery.data?.upstashConfig,
+    isLoading: allSettingsQuery.isLoading,
+  };
+
   // Domains - derived from consolidated query and transformed to DomainOption format
   const availableDomains = useMemo((): DomainOption[] => {
     const rawDomains = allSettingsQuery.data?.domains?.domains || [];
@@ -260,6 +266,9 @@ export const useSettingsController = () => {
       queryClient.setQueryData(['settings'], data);
       // Invalida allSettings para atualizar isConnected na UI
       queryClient.invalidateQueries({ queryKey: ['allSettings'] });
+      // Limpa cache e re-verifica limites com novo token
+      localStorage.removeItem('smartzap_account_limits');
+      queryClient.invalidateQueries({ queryKey: ['account-limits'] });
       toast.success('Configuração salva com sucesso!');
     },
     onError: () => {
@@ -270,7 +279,7 @@ export const useSettingsController = () => {
   const saveAIMutation = useMutation({
     mutationFn: settingsService.saveAIConfig,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['aiSettings'] });
+      queryClient.invalidateQueries({ queryKey: ['allSettings'] });
       toast.success('Configuração de IA salva com sucesso!');
     },
     // Error is handled inline in the component
@@ -279,7 +288,7 @@ export const useSettingsController = () => {
   const removeAIMutation = useMutation({
     mutationFn: settingsService.removeAIKey,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['aiSettings'] });
+      queryClient.invalidateQueries({ queryKey: ['allSettings'] });
     },
     onError: () => {
       toast.error('Erro ao remover chave de IA.');
@@ -287,10 +296,16 @@ export const useSettingsController = () => {
   });
 
   // Test Contact Mutations - Supabase
+  // Usa refetchQueries (não apenas invalidate) para garantir que os dados
+  // estejam disponíveis quando mutateAsync resolver - evita race condition na UI
   const saveTestContactMutation = useMutation({
     mutationFn: settingsService.saveTestContact,
-    onSuccess: () => {
+    onSuccess: async () => {
+      // Aguarda refetch da query principal (UI depende disso)
+      await queryClient.refetchQueries({ queryKey: ['allSettings'] });
+      // Invalida outras variações (não precisa aguardar)
       queryClient.invalidateQueries({ queryKey: ['testContact'] });
+      queryClient.invalidateQueries({ queryKey: ['test-contact'] });
       toast.success('Contato de teste salvo!');
     },
     onError: () => {
@@ -300,8 +315,12 @@ export const useSettingsController = () => {
 
   const removeTestContactMutation = useMutation({
     mutationFn: settingsService.removeTestContact,
-    onSuccess: () => {
+    onSuccess: async () => {
+      // Aguarda refetch da query principal (UI depende disso)
+      await queryClient.refetchQueries({ queryKey: ['allSettings'] });
+      // Invalida outras variações (não precisa aguardar)
       queryClient.invalidateQueries({ queryKey: ['testContact'] });
+      queryClient.invalidateQueries({ queryKey: ['test-contact'] });
       toast.success('Contato de teste removido!');
     },
     onError: () => {
@@ -311,8 +330,8 @@ export const useSettingsController = () => {
 
   const saveWhatsAppThrottleMutation = useMutation({
     mutationFn: settingsService.saveWhatsAppThrottle,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['whatsappThrottle'] });
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ['whatsappThrottle'] });
       toast.success('Configuração do modo turbo salva!');
     },
     onError: (err: any) => {
@@ -322,37 +341,60 @@ export const useSettingsController = () => {
 
   const saveAutoSuppressionMutation = useMutation({
     mutationFn: settingsService.saveAutoSuppression,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['autoSuppression'] })
-      toast.success('Configuração de auto-supressão salva!')
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ['autoSuppression'] });
+      toast.success('Configuração de auto-supressão salva!');
     },
     onError: (err: any) => {
-      toast.error(err?.message || 'Erro ao salvar auto-supressão')
+      toast.error(err?.message || 'Erro ao salvar auto-supressão');
     },
-  })
+  });
 
   const saveCalendarBookingMutation = useMutation({
     mutationFn: settingsService.saveCalendarBookingConfig,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['calendarBookingConfig'] })
-      toast.success('Configuração de agendamento salva!')
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ['allSettings'] });
+      toast.success('Configuração de agendamento salva!');
     },
     onError: (err: any) => {
-      toast.error(err?.message || 'Erro ao salvar configuracao de agendamento')
+      toast.error(err?.message || 'Erro ao salvar configuracao de agendamento');
     },
-  })
+  });
 
   const saveWorkflowExecutionMutation = useMutation({
     mutationFn: (data: Partial<WorkflowExecutionConfig>) =>
       settingsService.saveWorkflowExecutionConfig(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workflowExecutionConfig'] })
-      toast.success('Configuração de execução salva!')
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ['allSettings'] });
+      toast.success('Configuração de execução salva!');
     },
     onError: (err: any) => {
-      toast.error(err?.message || 'Erro ao salvar configuração de execução')
+      toast.error(err?.message || 'Erro ao salvar configuração de execução');
     },
-  })
+  });
+
+  // Upstash Config Mutations
+  const saveUpstashConfigMutation = useMutation({
+    mutationFn: settingsService.saveUpstashConfig,
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ['allSettings'] });
+      toast.success('Credenciais do Upstash salvas!');
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || 'Erro ao salvar credenciais do Upstash');
+    },
+  });
+
+  const removeUpstashConfigMutation = useMutation({
+    mutationFn: settingsService.removeUpstashConfig,
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ['allSettings'] });
+      toast.success('Credenciais do Upstash removidas!');
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || 'Erro ao remover credenciais do Upstash');
+    },
+  });
 
   const subscribeWebhookMessagesMutation = useMutation({
     mutationFn: async (callbackUrl?: string) => {
@@ -536,6 +578,7 @@ export const useSettingsController = () => {
       queryClient.invalidateQueries({ queryKey: ['webhookInfo'] });
       queryClient.invalidateQueries({ queryKey: ['phoneNumbers'] });
       queryClient.invalidateQueries({ queryKey: ['metaWebhookSubscription'] });
+      queryClient.invalidateQueries({ queryKey: ['metaAppConfig'] }); // Meta App ID também é removido
 
       toast.success('WhatsApp desconectado com sucesso!');
     } catch (error) {
@@ -753,7 +796,7 @@ export const useSettingsController = () => {
     // System health
     systemHealth: healthQuery.data || null,
     systemHealthLoading: healthQuery.isLoading,
-    refreshSystemHealth: () => queryClient.invalidateQueries({ queryKey: ['systemHealth'] }),
+    refreshSystemHealth: () => queryClient.invalidateQueries({ queryKey: ['systemStatus'] }),
     // Setup wizard
     setupSteps,
     needsSetup,
@@ -769,7 +812,10 @@ export const useSettingsController = () => {
     // Meta App (opcional)
     metaApp: metaAppQuery.data || null,
     metaAppLoading: metaAppQuery.isLoading,
-    refreshMetaApp: () => queryClient.invalidateQueries({ queryKey: ['metaAppConfig'] }),
+    refreshMetaApp: () => {
+      queryClient.invalidateQueries({ queryKey: ['allSettings'] });
+      queryClient.invalidateQueries({ queryKey: ['metaAppConfig'] });
+    },
     // Test Contact - persisted in Supabase
     testContact: testContactQuery.data || null,
     testContactLoading: testContactQuery.isLoading,
@@ -799,6 +845,13 @@ export const useSettingsController = () => {
     workflowExecutionLoading: workflowExecutionQuery.isLoading,
     saveWorkflowExecution: saveWorkflowExecutionMutation.mutateAsync,
     isSavingWorkflowExecution: saveWorkflowExecutionMutation.isPending,
+
+    // Upstash Config (métricas de uso do QStash)
+    upstashConfig: upstashConfigQuery.data || null,
+    upstashConfigLoading: upstashConfigQuery.isLoading,
+    saveUpstashConfig: saveUpstashConfigMutation.mutateAsync,
+    removeUpstashConfig: removeUpstashConfigMutation.mutateAsync,
+    isSavingUpstashConfig: saveUpstashConfigMutation.isPending,
 
   };
 };  

@@ -35,7 +35,6 @@ export function InstallLayout({
   const handleInteraction = useCallback(() => {
     if (!audioStartedRef.current) {
       audioStartedRef.current = true;
-      console.log('[InstallLayout] User interaction - starting ambient...');
       startAmbient();
     }
   }, []);
@@ -43,7 +42,6 @@ export function InstallLayout({
   // Cleanup no unmount
   useEffect(() => {
     return () => {
-      console.log('[InstallLayout] Unmount - stopping ambient');
       stopAmbient();
     };
   }, []);

@@ -59,6 +59,12 @@ export interface TemplateVariables {
   header: string[];
   body: string[];
   buttons?: Record<string, string>;
+  headerLocation?: {
+    latitude: string;
+    longitude: string;
+    name: string;
+    address: string;
+  };
 }
 
 // Template variable info type

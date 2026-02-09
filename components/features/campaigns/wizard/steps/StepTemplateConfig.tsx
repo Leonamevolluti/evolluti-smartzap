@@ -16,6 +16,7 @@ import {
   Circle,
   ExternalLink,
   Eye,
+  MapPin,
   MessageSquare,
   Plus,
   RefreshCw,
@@ -41,6 +42,12 @@ interface TemplateVariables {
   header: string[];
   body: string[];
   buttons?: Record<string, string>;
+  headerLocation?: {
+    latitude: string;
+    longitude: string;
+    name: string;
+    address: string;
+  };
 }
 
 export interface StepTemplateConfigProps {
@@ -130,6 +137,19 @@ export function StepTemplateConfig({
       t.category.toLowerCase().includes(search)
     );
   }, [availableTemplates, templateSearch, selectedTemplateId, templateCategoryFilter]);
+
+  // Detect if template has LOCATION header
+  const hasLocationHeader = useMemo(() => {
+    if (!selectedTemplate?.components) return false;
+    const headerComponent = selectedTemplate.components.find(
+      (c: any) => String(c?.type || '').toUpperCase() === 'HEADER'
+    );
+    return headerComponent?.format?.toUpperCase() === 'LOCATION';
+  }, [selectedTemplate]);
+
+  // Check if location fields are filled
+  const isLocationFilled = templateVariables.headerLocation?.latitude &&
+    templateVariables.headerLocation?.longitude;
 
   return (
     <div className="flex-1 min-h-0 flex flex-col space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 overflow-auto p-6">
@@ -463,6 +483,128 @@ export function StepTemplateConfig({
                 </p>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* LOCATION Header Section - Shows when template has LOCATION header */}
+      {selectedTemplate && hasLocationHeader && (
+        <div className="mt-8 p-6 bg-blue-500/5 border border-blue-500/20 rounded-xl animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="flex items-start gap-3 mb-4">
+            <div className="p-2 bg-blue-500/20 rounded-lg">
+              <MapPin className="text-blue-400" size={18} />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-[var(--ds-text-primary)]">Localização do Cabeçalho</h3>
+              <p className="text-xs text-[var(--ds-text-secondary)] mt-1">
+                Este template exibe uma localização no cabeçalho. Preencha os dados abaixo.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {/* Latitude & Longitude */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-[var(--ds-text-muted)] mb-1 block">Latitude *</label>
+                <input
+                  type="text"
+                  value={templateVariables.headerLocation?.latitude || ''}
+                  onChange={(e) => {
+                    setTemplateVariables({
+                      ...templateVariables,
+                      headerLocation: {
+                        latitude: e.target.value,
+                        longitude: templateVariables.headerLocation?.longitude || '',
+                        name: templateVariables.headerLocation?.name || '',
+                        address: templateVariables.headerLocation?.address || '',
+                      },
+                    });
+                  }}
+                  placeholder="Ex: -23.5505"
+                  className="w-full px-4 py-2 bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] rounded-lg focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 outline-none transition-all text-[var(--ds-text-primary)] text-sm placeholder-[var(--ds-text-muted)]"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-[var(--ds-text-muted)] mb-1 block">Longitude *</label>
+                <input
+                  type="text"
+                  value={templateVariables.headerLocation?.longitude || ''}
+                  onChange={(e) => {
+                    setTemplateVariables({
+                      ...templateVariables,
+                      headerLocation: {
+                        latitude: templateVariables.headerLocation?.latitude || '',
+                        longitude: e.target.value,
+                        name: templateVariables.headerLocation?.name || '',
+                        address: templateVariables.headerLocation?.address || '',
+                      },
+                    });
+                  }}
+                  placeholder="Ex: -46.6333"
+                  className="w-full px-4 py-2 bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] rounded-lg focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 outline-none transition-all text-[var(--ds-text-primary)] text-sm placeholder-[var(--ds-text-muted)]"
+                />
+              </div>
+            </div>
+
+            {/* Name */}
+            <div>
+              <label className="text-xs text-[var(--ds-text-muted)] mb-1 block">Nome do Local</label>
+              <input
+                type="text"
+                value={templateVariables.headerLocation?.name || ''}
+                onChange={(e) => {
+                  setTemplateVariables({
+                    ...templateVariables,
+                    headerLocation: {
+                      latitude: templateVariables.headerLocation?.latitude || '',
+                      longitude: templateVariables.headerLocation?.longitude || '',
+                      name: e.target.value,
+                      address: templateVariables.headerLocation?.address || '',
+                    },
+                  });
+                }}
+                placeholder="Ex: Loja Centro"
+                className="w-full px-4 py-2 bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] rounded-lg focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 outline-none transition-all text-[var(--ds-text-primary)] text-sm placeholder-[var(--ds-text-muted)]"
+              />
+            </div>
+
+            {/* Address */}
+            <div>
+              <label className="text-xs text-[var(--ds-text-muted)] mb-1 block">Endereço</label>
+              <input
+                type="text"
+                value={templateVariables.headerLocation?.address || ''}
+                onChange={(e) => {
+                  setTemplateVariables({
+                    ...templateVariables,
+                    headerLocation: {
+                      latitude: templateVariables.headerLocation?.latitude || '',
+                      longitude: templateVariables.headerLocation?.longitude || '',
+                      name: templateVariables.headerLocation?.name || '',
+                      address: e.target.value,
+                    },
+                  });
+                }}
+                placeholder="Ex: Av. Paulista, 1000 - São Paulo, SP"
+                className="w-full px-4 py-2 bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] rounded-lg focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 outline-none transition-all text-[var(--ds-text-primary)] text-sm placeholder-[var(--ds-text-muted)]"
+              />
+            </div>
+
+            {/* Status indicator */}
+            <div className="flex items-center gap-2 pt-2">
+              {isLocationFilled ? (
+                <>
+                  <Check size={16} className="text-primary-400" />
+                  <span className="text-xs text-primary-400">Localização configurada</span>
+                </>
+              ) : (
+                <>
+                  <AlertCircle size={14} className="text-amber-400" />
+                  <span className="text-xs text-amber-400">Latitude e Longitude são obrigatórios</span>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}

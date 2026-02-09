@@ -856,6 +856,58 @@ export function normalizeMetaErrorTextForStorage(input: unknown, maxLen = 500): 
 }
 
 /**
+ * Detecta se o erro é relacionado a codec de vídeo/áudio incompatível
+ */
+function detectCodecError(blob: string): { isCodecError: boolean; friendlyMessage: string | null } {
+  const lower = blob.toLowerCase()
+
+  // Padrão: "videoCodec=h264, audioCodec=unknown"
+  const videoMatch = lower.match(/videocodec\s*=\s*(\w+)/i)
+  const audioMatch = lower.match(/audiocodec\s*=\s*(\w+)/i)
+
+  if (!videoMatch && !audioMatch) {
+    return { isCodecError: false, friendlyMessage: null }
+  }
+
+  const videoCodec = videoMatch?.[1] || ''
+  const audioCodec = audioMatch?.[1] || ''
+
+  // Detectar áudio desconhecido/incompatível
+  if (audioCodec === 'unknown' || audioCodec === 'unsupported') {
+    return {
+      isCodecError: true,
+      friendlyMessage: 'Formato de áudio incompatível. Exporte o vídeo novamente com áudio AAC.',
+    }
+  }
+
+  // Detectar vídeo desconhecido/incompatível
+  if (videoCodec === 'unknown' || videoCodec === 'unsupported') {
+    return {
+      isCodecError: true,
+      friendlyMessage: 'Formato de vídeo incompatível. Exporte o vídeo novamente no formato H.264.',
+    }
+  }
+
+  // Detectar H.265/HEVC (não suportado)
+  if (videoCodec.includes('hevc') || videoCodec.includes('h265') || videoCodec.includes('hvc')) {
+    return {
+      isCodecError: true,
+      friendlyMessage: 'Formato de vídeo H.265 não é suportado. Exporte novamente no formato H.264.',
+    }
+  }
+
+  // Detectar VP9/AV1 (não suportado)
+  if (videoCodec.includes('vp9') || videoCodec.includes('av1') || videoCodec.includes('av01')) {
+    return {
+      isCodecError: true,
+      friendlyMessage: 'Formato de vídeo não suportado. Exporte novamente no formato H.264 com áudio AAC.',
+    }
+  }
+
+  return { isCodecError: false, friendlyMessage: null }
+}
+
+/**
  * Monta uma mensagem mais específica usando o payload oficial do erro da Meta
  * (`title`, `message` e especialmente `error_data.details`) como contexto.
  *
@@ -869,10 +921,39 @@ export function getUserFriendlyMessageForMetaError(input: WhatsAppMetaErrorConte
   const message = truncateText(normalizeMetaText(input.message), 240)
   const title = truncateText(normalizeMetaText(input.title), 160)
 
-  // Caso comum em templates com HEADER de mídia: a Meta aceita o envio, mas depois falha
+  const blob = `${title} ${message} ${details}`.toLowerCase()
+
+  // 1. Detectar mismatch de formato de mídia (ex: "expected GIF, received VIDEO")
+  const formatMismatch = blob.match(/expected\s+(\w+),?\s+received\s+(\w+)/i)
+  if (formatMismatch) {
+    const expected = formatMismatch[1].toUpperCase()
+    const received = formatMismatch[2].toUpperCase()
+
+    if (expected === 'GIF' && received === 'VIDEO') {
+      return 'O template usa GIF (vídeo em loop), mas você enviou um Vídeo normal. Use a mídia correta ou edite o template.'
+    }
+    if (expected === 'VIDEO' && received === 'GIF') {
+      return 'O template usa Vídeo, mas você enviou um GIF. Use a mídia correta ou edite o template.'
+    }
+    if (expected === 'IMAGE') {
+      return `O template usa Imagem, mas você enviou ${received}. Use a mídia correta ou edite o template.`
+    }
+    if (expected === 'LOCATION') {
+      return 'O template usa Localização no cabeçalho. Configure latitude, longitude, nome e endereço antes de enviar.'
+    }
+
+    return `Tipo de mídia incorreto: o template espera ${expected}, mas recebeu ${received}.`
+  }
+
+  // 2. Detectar erro de codec de vídeo/áudio
+  const codecError = detectCodecError(blob)
+  if (codecError.isCodecError && codecError.friendlyMessage) {
+    return codecError.friendlyMessage
+  }
+
+  // 3. Caso comum em templates com HEADER de mídia: a Meta aceita o envio, mas depois falha
   // ao baixar do "weblink" (403). Alguns tenants recebem isso como 131052/131053/131054.
   // Ajustamos a mensagem para evitar confusão com "upload".
-  const blob = `${title} ${message} ${details}`.toLowerCase()
   const isWeblink403 =
     blob.includes('weblink') &&
     (blob.includes('http code 403') || blob.includes(' 403') || blob.includes('forbidden'))

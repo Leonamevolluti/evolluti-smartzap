@@ -1,4 +1,15 @@
 import type { NextConfig } from 'next'
+import { config as loadEnv } from 'dotenv'
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+// Carrega .env.vercel.local no dev (Vercel CLI não lê este arquivo automaticamente)
+if (process.env.NODE_ENV !== 'production') {
+  const vercelEnvPath = resolve(process.cwd(), '.env.vercel.local')
+  if (existsSync(vercelEnvPath)) {
+    loadEnv({ path: vercelEnvPath })
+  }
+}
 
 const isProd = process.env.NODE_ENV === 'production'
 
@@ -31,6 +42,12 @@ const nextConfig: NextConfig = {
   // to direct module imports, reducing bundle size significantly
   experimental: {
     optimizePackageImports: ['lucide-react', '@radix-ui/react-icons'],
+    // Aumentar limite de body para uploads de mídia (vídeos até 16MB)
+    serverActions: {
+      bodySizeLimit: '20mb',
+    },
+    // Aumentar limite para proxy e middleware (necessário para uploads grandes)
+    proxyClientMaxBodySize: '20mb',
   },
 
   // Include SQL migration files in the serverless bundle

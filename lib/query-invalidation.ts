@@ -78,18 +78,31 @@ export function invalidateDashboard(queryClient: QueryClient) {
 
 /**
  * Invalidate settings-related queries.
+ * Includes all variations of settings queries used across the app.
  */
 export function invalidateSettings(queryClient: QueryClient) {
+  // Core settings queries
   queryClient.invalidateQueries({ queryKey: ['settings'] })
+  queryClient.invalidateQueries({ queryKey: ['allSettings'] }) // Consolidated query
   queryClient.invalidateQueries({ queryKey: ['accountLimits'] })
   queryClient.invalidateQueries({ queryKey: ['phoneNumbers'] })
+  // Test contact (multiple query key variations)
+  queryClient.invalidateQueries({ queryKey: ['testContact'] })
+  queryClient.invalidateQueries({ queryKey: ['test-contact'] })
+  // Meta App config
+  queryClient.invalidateQueries({ queryKey: ['metaAppConfig'] })
+  // System status
+  queryClient.invalidateQueries({ queryKey: ['systemStatus'] })
 }
 
 /**
  * Invalidate custom fields queries.
+ * Includes all variations of custom fields query keys.
  */
 export function invalidateCustomFields(queryClient: QueryClient) {
   queryClient.invalidateQueries({ queryKey: ['customFields'] })
+  queryClient.invalidateQueries({ queryKey: ['customFields', 'contact'] })
+  queryClient.invalidateQueries({ queryKey: ['custom-fields', 'contact'] })
 }
 
 /**

@@ -80,15 +80,20 @@ export const StatusCard = forwardRef<HTMLDivElement, StatusCardProps>(function S
                 Verificando limites...
               </span>
             ) : limitsError ? (
-              <button
-                onClick={onRefreshLimits}
-                className="h-10 px-3 bg-[var(--ds-status-error-bg)] rounded-lg text-xs font-medium text-[var(--ds-status-error-text)] border border-[var(--ds-status-error)]/20 flex items-center gap-1.5 hover:bg-[var(--ds-status-error)]/20 transition-colors focus-visible:outline-2 focus-visible:outline-red-500 focus-visible:outline-offset-2"
-                aria-label="Tentar buscar limites da conta novamente"
-              >
-                <AlertCircle size={12} aria-hidden="true" />
-                {limitsErrorMessage || 'Erro ao buscar limites'}
-                <RefreshCw size={10} className="ml-1" aria-hidden="true" />
-              </button>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={onRefreshLimits}
+                  className="h-10 px-3 bg-[var(--ds-status-error-bg)] rounded-lg text-xs font-medium text-[var(--ds-status-error-text)] border border-[var(--ds-status-error)]/20 flex items-center gap-1.5 hover:bg-[var(--ds-status-error)]/20 transition-colors focus-visible:outline-2 focus-visible:outline-red-500 focus-visible:outline-offset-2"
+                  aria-label="Tentar buscar limites da conta novamente"
+                >
+                  <AlertCircle size={12} aria-hidden="true" />
+                  {limitsErrorMessage || 'Erro ao conectar com a API da Meta'}
+                  <RefreshCw size={10} className="ml-1" aria-hidden="true" />
+                </button>
+                <p className="text-xs text-[var(--ds-text-muted)]">
+                  O token pode ter expirado. Clique em <strong className="text-[var(--ds-text-primary)]">Editar</strong> para atualizar.
+                </p>
+              </div>
             ) : (
               <span className="px-3 py-1.5 bg-[var(--ds-bg-elevated)] rounded-lg text-xs font-medium text-[var(--ds-status-success-text)] border border-[var(--ds-status-success)]/20 flex items-center gap-1.5">
                 <Wifi size={12} />

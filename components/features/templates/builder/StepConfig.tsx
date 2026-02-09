@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 
+// Tipos de botão suportados pela Meta API para templates
 type ButtonType =
   | 'QUICK_REPLY'
   | 'URL'
@@ -18,15 +19,6 @@ type ButtonType =
   | 'COPY_CODE'
   | 'OTP'
   | 'FLOW'
-  | 'CATALOG'
-  | 'MPM'
-  | 'VOICE_CALL'
-  | 'EXTENSION'
-  | 'ORDER_DETAILS'
-  | 'POSTBACK'
-  | 'REMINDER'
-  | 'SEND_LOCATION'
-  | 'SPM'
 
 type Spec = {
   name?: string
@@ -110,22 +102,7 @@ export function StepConfig({
               const nextAllowedButtons = new Set<ButtonType>(
                 nextCategory === 'AUTHENTICATION'
                   ? ['OTP']
-                  : [
-                      'QUICK_REPLY',
-                      'URL',
-                      'PHONE_NUMBER',
-                      'COPY_CODE',
-                      'FLOW',
-                      'VOICE_CALL',
-                      'CATALOG',
-                      'MPM',
-                      'EXTENSION',
-                      'ORDER_DETAILS',
-                      'POSTBACK',
-                      'REMINDER',
-                      'SEND_LOCATION',
-                      'SPM',
-                    ],
+                  : ['QUICK_REPLY', 'URL', 'PHONE_NUMBER', 'COPY_CODE', 'FLOW'],
               )
               const nextButtons = buttons.filter((b) => nextAllowedButtons.has(b?.type as ButtonType))
               if (nextCategory === 'AUTHENTICATION' && nextButtons.length === 0) {

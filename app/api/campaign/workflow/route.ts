@@ -3,7 +3,8 @@ import { campaignDb, templateDb } from '@/lib/supabase-db'
 import { supabase } from '@/lib/supabase'
 import { CampaignStatus, ContactStatus } from '@/types'
 import { getUserFriendlyMessageForMetaError, normalizeMetaErrorTextForStorage } from '@/lib/whatsapp-errors'
-import { buildMetaTemplatePayload, precheckContactForTemplate } from '@/lib/whatsapp/template-contract'
+import { buildMetaTemplatePayload, precheckContactForTemplate, renderTemplatePreviewText } from '@/lib/whatsapp/template-contract'
+import { syncCampaignTemplateToInbox } from '@/lib/inbox/inbox-service'
 import { emitWorkflowTrace, maskPhone, timePhase } from '@/lib/workflow-trace'
 import { createRateLimiter } from '@/lib/rate-limiter'
 import { recordStableBatch, recordThroughputExceeded, getAdaptiveThrottleConfigWithSource, getAdaptiveThrottleState } from '@/lib/whatsapp-adaptive-throttle'
@@ -288,6 +289,18 @@ interface CampaignWorkflowInput {
   phoneNumberId: string
   accessToken: string
   isResend?: boolean
+  // Config de throttle passada do dispatch (evita dependência de DB no QStash)
+  throttleConfig?: {
+    enabled: boolean
+    sendConcurrency: number
+    batchSize: number
+    startMps: number
+    maxMps: number
+    minMps: number
+    cooldownSec: number
+    minIncreaseGapSec: number
+    sendFloorDelayMs: number
+  } | null
 }
 
 async function claimPendingForSend(
@@ -448,16 +461,18 @@ async function updateContactStatus(
     }
 
     if (status === 'skipped') {
+      const skipReason = opts?.skipReason || opts?.error || null
       update.skipped_at = now
       update.skip_code = opts?.skipCode || null
-      update.skip_reason = opts?.skipReason || opts?.error || null
-      update.error = null
+      update.skip_reason = skipReason
+      // CHECK constraint exige: failure_reason IS NOT NULL OR error IS NOT NULL quando status='skipped'
+      update.error = skipReason
       update.message_id = null
 
       update.sent_at = null
       update.failed_at = null
       update.failure_code = null
-      update.failure_reason = null
+      update.failure_reason = skipReason
       update.failure_title = null
       update.failure_details = null
       update.failure_fbtrace_id = null
@@ -495,28 +510,16 @@ async function updateContactStatus(
 // Each step is a separate HTTP request, bypasses Vercel 10s timeout
 const workflowHandler = serve<CampaignWorkflowInput>(
   async (context) => {
-    const { campaignId, templateName, contacts, templateVariables, phoneNumberId, accessToken, templateSnapshot, traceId: incomingTraceId } = context.requestPayload
+    const { campaignId, templateName, contacts, templateVariables, phoneNumberId, accessToken, templateSnapshot, traceId: incomingTraceId, throttleConfig: payloadThrottleConfig } = context.requestPayload
 
     const traceId = (incomingTraceId && String(incomingTraceId).trim().length > 0)
       ? String(incomingTraceId).trim()
       : `wf_${campaignId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 
 
-    await emitWorkflowTrace({
-      traceId,
-      campaignId,
-      step: 'workflow',
-      phase: 'start',
-      ok: true,
-      extra: {
-        contacts: contacts?.length || 0,
-        hasTemplateSnapshot: Boolean(templateSnapshot),
-        isResend: Boolean((context.requestPayload as any)?.isResend),
-      },
-    })
-
     // HARDENING: workflow é estritamente baseado em contact_id.
     // Se vier algum contato sem contactId, é bug no dispatch/resend e devemos falhar cedo.
+    // NOTA: Esta validação é síncrona e determinística, pode ficar fora de context.run()
     const missingContactIds = (contacts || []).filter((c) => !c.contactId || String(c.contactId).trim().length === 0)
     if (missingContactIds.length > 0) {
       const sample = missingContactIds.slice(0, 10).map((c) => ({ phone: c.phone, name: c.name || '' }))
@@ -525,43 +528,50 @@ const workflowHandler = serve<CampaignWorkflowInput>(
       )
     }
 
-    // Se a campanha foi cancelada antes do workflow iniciar, saímos sem tocar em status.
-    // (Importante para evitar que o init-campaign volte para SENDING.)
-    const existingAtStart = await campaignDb.getById(campaignId)
-    if (existingAtStart?.status === CampaignStatus.CANCELLED) {
+    let shouldStopWorkflow: 'cancelled' | null = null
+
+    // Step 1: Check cancellation and mark campaign as SENDING
+    // IMPORTANTE: Todo código não-determinístico (DB, fetch, etc) DEVE estar dentro de context.run()
+    // Ref: https://upstash.com/docs/workflow/basics/caveats#avoid-non-deterministic-code-outside-context-run
+    await context.run('init-campaign', async () => {
+      // Emit trace de início
       await emitWorkflowTrace({
         traceId,
         campaignId,
         step: 'workflow',
-        phase: 'cancelled_before_start',
+        phase: 'start',
         ok: true,
+        extra: {
+          contacts: contacts?.length || 0,
+          hasTemplateSnapshot: Boolean(templateSnapshot),
+          isResend: Boolean((context.requestPayload as any)?.isResend),
+        },
       })
-      console.log(`🛑 Campaign ${campaignId} already CANCELLED before workflow start. Exiting.`)
-      return
-    }
 
-    let shouldStopWorkflow: 'cancelled' | null = null
-
-    // Step 1: Mark campaign as SENDING in Supabase
-    await context.run('init-campaign', async () => {
       const nowIso = new Date().toISOString()
       const existing = await campaignDb.getById(campaignId)
 
-      // Defesa extra: não sobrescrever cancelamento.
+      // Verifica se campanha foi cancelada antes de iniciar
       if (existing?.status === CampaignStatus.CANCELLED) {
+        await emitWorkflowTrace({
+          traceId,
+          campaignId,
+          step: 'workflow',
+          phase: 'cancelled_before_start',
+          ok: true,
+        })
+        console.log(`🛑 Campaign ${campaignId} already CANCELLED before workflow start. Exiting.`)
         shouldStopWorkflow = 'cancelled'
         return
       }
 
       const startedAt = (existing as any)?.startedAt || nowIso
 
-
       await campaignDb.updateStatus(campaignId, {
         status: CampaignStatus.SENDING,
         startedAt,
         completedAt: null,
       })
-
 
       console.log(`📊 Campaign ${campaignId} started with ${contacts.length} contacts (traceId=${traceId})`)
       console.log(`📝 Template variables: ${JSON.stringify(templateVariables || [])}`)
@@ -572,22 +582,34 @@ const workflowHandler = serve<CampaignWorkflowInput>(
       return
     }
 
-    // Step 2: Process contacts in smaller batches
+    // Step 2: Preparar batches (usa config do payload ou fallback para DB)
+    // IMPORTANTE: Chamadas assíncronas devem estar dentro de context.run()
+    const { batches, BATCH_SIZE, cfgForBatching } = await context.run('prepare-batches', async () => {
+      // Prioridade: config do payload (passada pelo dispatch) > DB > env > default
+      let cfg: Awaited<ReturnType<typeof getAdaptiveThrottleConfigWithSource>> | null = null
+      if (payloadThrottleConfig) {
+        cfg = { config: payloadThrottleConfig, source: 'db' as const, rawPresent: true }
+        console.log('[Workflow] Using throttle config from dispatch payload')
+      } else {
+        cfg = await getAdaptiveThrottleConfigWithSource().catch(() => null)
+        console.log(`[Workflow] Throttle config from ${cfg?.source ?? 'fallback'}`)
+      }
+      const rawBatchSize = Number(cfg?.config?.batchSize ?? process.env.WHATSAPP_WORKFLOW_BATCH_SIZE ?? '10')
+      const batchSize = Number.isFinite(rawBatchSize)
+        ? Math.max(1, Math.min(200, Math.floor(rawBatchSize)))
+        : 10
+
+      const contactBatches: Contact[][] = []
+      for (let i = 0; i < contacts.length; i += batchSize) {
+        contactBatches.push(contacts.slice(i, i + batchSize))
+      }
+
+      console.log(`📦 Prepared ${contactBatches.length} batches of up to ${batchSize} contacts each (batchSize=${batchSize})`)
+      return { batches: contactBatches, BATCH_SIZE: batchSize, cfgForBatching: cfg }
+    })
+
+    // Step 3+: Process contacts in smaller batches
     // Each batch is a separate step = separate HTTP request = bypasses 10s limit
-    // Observação: cada contato faz múltiplas operações (DB + fetch Meta).
-    // Para bater metas agressivas (ex.: “enviar em 1 min”), batch size precisa ser ajustável.
-    // Mantemos um default conservador (10) e permitimos tuning via settings/env.
-    const cfgForBatching = await getAdaptiveThrottleConfigWithSource().catch(() => null)
-    const rawBatchSize = Number(cfgForBatching?.config?.batchSize ?? process.env.WHATSAPP_WORKFLOW_BATCH_SIZE ?? '10')
-    const BATCH_SIZE = Number.isFinite(rawBatchSize)
-      ? Math.max(1, Math.min(200, Math.floor(rawBatchSize)))
-      : 10
-    const batches: Contact[][] = []
-
-    for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
-      batches.push(contacts.slice(i, i + BATCH_SIZE))
-    }
-
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batch = batches[batchIndex]
 
@@ -618,8 +640,8 @@ const workflowHandler = serve<CampaignWorkflowInput>(
 
         // Adaptive throttle (global throughput) — state compartilhado via settings.
         // Ajuda a "pisar no acelerador" sem ficar batendo em 130429 o tempo todo.
-        const adaptiveCfg = await getAdaptiveThrottleConfigWithSource().catch(() => null)
-        const adaptiveConfig = adaptiveCfg?.config || null
+        // Usa a config que já foi carregada no prepare-batches (evita nova chamada ao DB)
+        const adaptiveConfig = cfgForBatching?.config || null
         const adaptiveEnabled = Boolean(adaptiveConfig?.enabled)
         let sawThroughput429 = false
         let limiter: ReturnType<typeof createRateLimiter> | null = null
@@ -1197,8 +1219,8 @@ const workflowHandler = serve<CampaignWorkflowInput>(
               batchSize: BATCH_SIZE,
               adaptiveEnabled,
               floorDelayMs,
-              turboConfigSource: adaptiveCfg?.source || null,
-              turboRawPresent: adaptiveCfg?.rawPresent ?? null,
+              turboConfigSource: cfgForBatching?.source || null,
+              turboRawPresent: cfgForBatching?.rawPresent ?? null,
               batchingConfigSource: cfgForBatching?.source || null,
               batchingRawPresent: cfgForBatching?.rawPresent ?? null,
             },
@@ -1540,6 +1562,25 @@ const workflowHandler = serve<CampaignWorkflowInput>(
                 { sendingAt: sendingAtIso, messageId, traceId }
               )
               dbTimeMs += Date.now() - db0
+
+              // Sincroniza template com inbox (fire-and-forget, non-blocking)
+              // Permite que a IA tenha contexto e o operador veja o histórico
+              const activeTemplateForSync = refreshedTemplateForBatch || templateForBatch
+              syncCampaignTemplateToInbox({
+                phone: precheck.normalizedPhone,
+                contactId: contact.contactId,
+                whatsappMessageId: messageId,
+                templateName,
+                templatePreviewText: renderTemplatePreviewText(
+                  activeTemplateForSync as any,
+                  valuesForSend
+                ),
+                resolvedValues: valuesForSend,
+                campaignId,
+                template: activeTemplateForSync as any,
+              }).catch((err) => {
+                console.warn(`[workflow] inbox sync failed for ${maskPhone(contact.phone)}:`, err)
+              })
 
               // Métrica operacional: quando foi o último "sent" (envio/dispatch), sem depender de delivery.
               lastSentAtInBatch = new Date().toISOString()
@@ -2074,15 +2115,17 @@ const workflowHandler = serve<CampaignWorkflowInput>(
                 base.failure_href = null
               } else if (op.status === 'skipped') {
                 const now = new Date().toISOString()
+                const skipReason = op.opts?.skipReason || op.opts?.error || null
                 base.skipped_at = now
                 base.sent_at = null
                 base.failed_at = null
                 base.message_id = null
-                base.error = null
+                // CHECK constraint exige: failure_reason IS NOT NULL OR error IS NOT NULL quando status='skipped'
+                base.error = skipReason
                 base.skip_code = op.opts?.skipCode || null
-                base.skip_reason = op.opts?.skipReason || op.opts?.error || null
+                base.skip_reason = skipReason
                 base.failure_code = null
-                base.failure_reason = null
+                base.failure_reason = skipReason
                 base.failure_title = null
                 base.failure_details = null
                 base.failure_fbtrace_id = null
@@ -2406,8 +2449,8 @@ const workflowHandler = serve<CampaignWorkflowInput>(
 
       // Persistência best-effort do "run" (baseline / evolução).
       try {
-        const adaptiveCfg = await getAdaptiveThrottleConfigWithSource().catch(() => null)
-        const adaptiveConfig = adaptiveCfg?.config || null
+        // Usa a config que já foi carregada no prepare-batches
+        const adaptiveConfig = cfgForBatching?.config || null
         const rawConcurrency = Number(adaptiveConfig?.sendConcurrency ?? process.env.WHATSAPP_SEND_CONCURRENCY ?? '1')
         const concurrency = Number.isFinite(rawConcurrency)
           ? Math.max(1, Math.min(50, Math.floor(rawConcurrency)))

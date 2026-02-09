@@ -32,21 +32,13 @@ export const TemplateStatusSchema = z.enum(['APPROVED', 'PENDING', 'REJECTED']);
 /** Schema Zod para botões de template do WhatsApp (QUICK_REPLY/URL/PHONE_NUMBER). */
 export const TemplateButtonSchema = z.object({
   type: z.enum([
+    // Tipos de botão suportados pela Meta API para templates
     'QUICK_REPLY',
     'URL',
     'PHONE_NUMBER',
     'COPY_CODE',
     'OTP',
     'FLOW',
-    'CATALOG',
-    'MPM',
-    'VOICE_CALL',
-    'EXTENSION',
-    'ORDER_DETAILS',
-    'POSTBACK',
-    'REMINDER',
-    'SEND_LOCATION',
-    'SPM',
   ]),
   text: z.string().optional(),
   url: z.string().optional(),

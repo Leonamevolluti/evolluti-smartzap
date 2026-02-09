@@ -45,6 +45,9 @@ const updateAgentSchema = z.object({
   handoff_instructions: z.string().nullable().optional(),
   // Booking tool config
   booking_tool_enabled: z.boolean().optional(),
+  // Tool permissions
+  allow_reactions: z.boolean().optional(),
+  allow_quotes: z.boolean().optional(),
 })
 
 /**

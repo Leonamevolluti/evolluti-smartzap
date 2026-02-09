@@ -45,6 +45,9 @@ const createAgentSchema = z.object({
   handoff_instructions: z.string().nullable().optional(),
   // Booking tool config
   booking_tool_enabled: z.boolean().default(false),
+  // Tool permissions
+  allow_reactions: z.boolean().default(true),
+  allow_quotes: z.boolean().default(true),
 })
 
 /**
@@ -100,6 +103,17 @@ export async function POST(request: NextRequest) {
 
     const data = parsed.data
 
+    // Verifica se é o primeiro agente - se sim, marca como padrão automaticamente
+    const { count } = await supabase
+      .from('ai_agents')
+      .select('*', { count: 'exact', head: true })
+
+    // count pode ser null quando não há registros
+    const isFirstAgent = !count || count === 0
+    if (isFirstAgent) {
+      data.is_default = true
+    }
+
     // If setting as default, unset other defaults first
     if (data.is_default) {
       await supabase
@@ -135,6 +149,9 @@ export async function POST(request: NextRequest) {
         handoff_instructions: data.handoff_instructions || null,
         // Booking tool config
         booking_tool_enabled: data.booking_tool_enabled,
+        // Tool permissions
+        allow_reactions: data.allow_reactions,
+        allow_quotes: data.allow_quotes,
       })
       .select()
       .single()

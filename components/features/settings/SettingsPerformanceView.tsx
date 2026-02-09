@@ -165,6 +165,7 @@ export function SettingsPerformanceView(props: {
 }) {
   const { data } = props
   const [isMounted, setIsMounted] = React.useState(false)
+  const chartContainerRef = React.useRef<HTMLDivElement>(null)
 
   const gaugeMax = React.useMemo(() => {
     const candidates: number[] = []
@@ -190,10 +191,16 @@ export function SettingsPerformanceView(props: {
 
   React.useEffect(() => {
     // Aguarda o browser calcular as dimensões do container antes de renderizar o chart
-    const frame = requestAnimationFrame(() => {
-      setIsMounted(true)
-    })
-    return () => cancelAnimationFrame(frame)
+    const timer = setTimeout(() => {
+      const container = chartContainerRef.current
+      if (container && container.clientWidth > 0 && container.clientHeight > 0) {
+        setIsMounted(true)
+      } else {
+        // Fallback: renderiza mesmo assim após 500ms
+        setTimeout(() => setIsMounted(true), 500)
+      }
+    }, 100)
+    return () => clearTimeout(timer)
   }, [])
 
   return (
@@ -344,9 +351,9 @@ export function SettingsPerformanceView(props: {
           <div className="text-xs text-gray-500">{props.isLoading ? 'Carregando…' : `${props.filteredRuns.length} pontos`}</div>
         </div>
 
-        <div className="mt-4 h-72 w-full">
-          {isMounted ? (
-            <ResponsiveContainer width="100%" height="100%">
+        <div ref={chartContainerRef} className="mt-4 h-72 w-full">
+          {isMounted && chartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
               <AreaChart data={chartData}>
               <defs>
                 <linearGradient id="colorThroughput" x1="0" y1="0" x2="0" y2="1">

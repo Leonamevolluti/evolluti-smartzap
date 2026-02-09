@@ -68,6 +68,76 @@ interface GeneratedTemplate {
 // Corrige automaticamente templates que violam regras conhecidas
 // ============================================================================
 
+/**
+ * Normaliza variáveis para serem sequenciais
+ * Problema: AI às vezes gera {{1}}, {{5}}, {{6}} em vez de {{1}}, {{2}}, {{3}}
+ * Solução: Renumera todas as variáveis para serem sequenciais
+ */
+function normalizeVariablesToSequential(
+  content: string,
+  headerText: string | null,
+  sampleVars: Record<string, string> | undefined,
+  marketingVars: Record<string, string> | undefined
+): {
+  content: string
+  headerText: string | null
+  sample_variables: Record<string, string> | undefined
+  marketing_variables: Record<string, string> | undefined
+} {
+  // 1. Encontra todas as variáveis usadas no template
+  const allText = [content, headerText || ''].join(' ')
+  const varPattern = /\{\{(\d+)\}\}/g
+  const usedVars = new Set<number>()
+  let match
+  while ((match = varPattern.exec(allText)) !== null) {
+    usedVars.add(parseInt(match[1]))
+  }
+
+  // Se não há variáveis ou já são sequenciais, retorna original
+  const sortedVars = Array.from(usedVars).sort((a, b) => a - b)
+  const isSequential = sortedVars.every((v, i) => v === i + 1)
+
+  if (sortedVars.length === 0 || isSequential) {
+    return { content, headerText, sample_variables: sampleVars, marketing_variables: marketingVars }
+  }
+
+  // 2. Cria mapeamento: variável original -> nova posição sequencial
+  const varMapping: Record<number, number> = {}
+  sortedVars.forEach((oldVar, index) => {
+    varMapping[oldVar] = index + 1
+  })
+
+  // 3. Substitui variáveis no content e header
+  const replaceVars = (text: string) => {
+    return text.replace(/\{\{(\d+)\}\}/g, (_, num) => {
+      const newNum = varMapping[parseInt(num)] || num
+      return `{{${newNum}}}`
+    })
+  }
+
+  const normalizedContent = replaceVars(content)
+  const normalizedHeader = headerText ? replaceVars(headerText) : null
+
+  // 4. Reorganiza sample_variables e marketing_variables
+  const remapVars = (vars: Record<string, string> | undefined): Record<string, string> | undefined => {
+    if (!vars) return undefined
+    const newVars: Record<string, string> = {}
+    for (const [oldKey, newKey] of Object.entries(varMapping)) {
+      if (vars[oldKey]) {
+        newVars[String(newKey)] = vars[oldKey]
+      }
+    }
+    return Object.keys(newVars).length > 0 ? newVars : undefined
+  }
+
+  return {
+    content: normalizedContent,
+    headerText: normalizedHeader,
+    sample_variables: remapVars(sampleVars),
+    marketing_variables: remapVars(marketingVars)
+  }
+}
+
 function sanitizeContentForMeta(content: string): string {
   let sanitized = content.trim()
 
@@ -218,19 +288,31 @@ function normalizeTemplate(
     }
   }
 
+  // === PASSO FINAL: Normalizar variáveis para serem sequenciais ===
+  // AI às vezes gera {{1}}, {{5}}, {{6}} em vez de {{1}}, {{2}}, {{3}}
+  // Isso causa rejeição pela Meta - variáveis devem ser sequenciais
+  const normalized = normalizeVariablesToSequential(
+    content,
+    header?.text || null,
+    sample_variables,
+    marketing_variables
+  )
+
   return {
     id: `generated_${Date.now()}_${index}`,
     name,
-    content,
-    header,
+    content: normalized.content,
+    header: normalized.headerText && header
+      ? { ...header, text: normalized.headerText }
+      : header,
     footer,
     buttons,
     language,
     status: 'DRAFT',
     category,
     variables,
-    sample_variables,
-    marketing_variables
+    sample_variables: normalized.sample_variables,
+    marketing_variables: normalized.marketing_variables
   }
 }
 
@@ -333,12 +415,16 @@ export async function POST(request: NextRequest) {
 
     // ========================================================================
     // AI JUDGE - Validar cada template
-    // Pula para MARKETING (não precisa parecer neutro)
+    // APENAS para UTILITY - verifica se parece neutro/transacional
     // ========================================================================
     let validatedTemplates = templates
 
-    // Templates MARKETING não precisam do AI Judge - eles DEVEM ter linguagem promocional
-    const shouldRunJudge = strategy !== 'marketing'
+    // BYPASS e MARKETING NÃO passam pelo AI Judge:
+    // - MARKETING: DEVE ter linguagem promocional direta
+    // - BYPASS: USA palavras emocionais no texto fixo ("exclusivo", "especial", "reservado")
+    //           Essas palavras são INTENCIONAIS - fazem o bypass funcionar
+    // Apenas UTILITY precisa validação de neutralidade
+    const shouldRunJudge = strategy === 'utility'
 
     try {
       if (apiKey && shouldRunJudge) {
@@ -451,18 +537,28 @@ export async function POST(request: NextRequest) {
     }
 
     // ========================================================================
-    // GENERATE BATCH TITLE
+    // GENERATE BATCH TITLE (com timeout de 5s para não travar)
     // ========================================================================
     let batchTitle = 'Submissão em Lote'
     try {
-      const titleResult = await generateText({
+      const titlePromise = generateText({
         prompt: `Resuma em NO MÁXIMO 4 palavras (sem pontuação) o tema: "${userPrompt.substring(0, 200)}". Retorne APENAS as palavras.`,
       })
+
+      // Timeout de 5 segundos - se demorar mais, usa fallback
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Title generation timeout')), 5000)
+      )
+
+      const titleResult = await Promise.race([titlePromise, timeoutPromise])
       batchTitle = titleResult.text.trim()
         .replace(/["""''\.]/g, '')
         .substring(0, 40) || 'Submissão em Lote'
-    } catch {
-      batchTitle = userPrompt.substring(0, 30).trim() + '...'
+    } catch (titleError) {
+      console.log('[GENERATE] Title generation failed/timeout, using fallback:', titleError instanceof Error ? titleError.message : 'unknown')
+      // Fallback: extrai primeiras palavras do prompt
+      const words = userPrompt.split(/\s+/).slice(0, 4).join(' ')
+      batchTitle = words.length > 30 ? words.substring(0, 30) + '...' : words
     }
 
     return NextResponse.json({

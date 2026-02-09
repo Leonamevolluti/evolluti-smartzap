@@ -5,6 +5,52 @@
 
 const SUPABASE_API_BASE = 'https://api.supabase.com';
 
+/**
+ * Mapeamento de regiões Vercel para regiões Supabase mais próximas.
+ * Vercel: https://vercel.com/docs/edge-network/regions
+ * Supabase: https://supabase.com/docs/guides/platform/regions
+ */
+const VERCEL_TO_SUPABASE_REGION: Record<string, string> = {
+  // Americas
+  'iad1': 'us-east-1',      // Washington D.C. -> N. Virginia
+  'cle1': 'us-east-1',      // Cleveland -> N. Virginia
+  'bos1': 'us-east-1',      // Boston -> N. Virginia
+  'sfo1': 'us-west-1',      // San Francisco -> N. California
+  'pdx1': 'us-west-2',      // Portland -> Oregon
+  'gru1': 'sa-east-1',      // São Paulo -> São Paulo
+  'cpt1': 'sa-east-1',      // Cape Town -> São Paulo (mais próximo)
+
+  // Europe
+  'lhr1': 'eu-west-2',      // London -> London
+  'cdg1': 'eu-west-3',      // Paris -> Paris
+  'fra1': 'eu-central-1',   // Frankfurt -> Frankfurt
+  'arn1': 'eu-north-1',     // Stockholm -> Stockholm
+  'dub1': 'eu-west-1',      // Dublin -> Ireland
+
+  // Asia/Pacific
+  'hnd1': 'ap-northeast-1', // Tokyo -> Tokyo
+  'icn1': 'ap-northeast-2', // Seoul -> Seoul
+  'sin1': 'ap-southeast-1', // Singapore -> Singapore
+  'syd1': 'ap-southeast-2', // Sydney -> Sydney
+  'bom1': 'ap-south-1',     // Mumbai -> Mumbai
+  'hkg1': 'ap-southeast-1', // Hong Kong -> Singapore (mais próximo)
+};
+
+/**
+ * Detecta a região Supabase ideal baseado na região Vercel.
+ * Usa VERCEL_REGION env var ou fallback para us-east-1.
+ */
+export function detectSupabaseRegion(): string {
+  const vercelRegion = process.env.VERCEL_REGION?.toLowerCase();
+
+  if (vercelRegion && VERCEL_TO_SUPABASE_REGION[vercelRegion]) {
+    return VERCEL_TO_SUPABASE_REGION[vercelRegion];
+  }
+
+  // Fallback: us-east-1 é a região mais estável e comum
+  return 'us-east-1';
+}
+
 type SupabaseApiKeyItem = {
   api_key?: string;
   name?: string;
@@ -192,6 +238,56 @@ export async function listSupabaseOrganizations(params: { accessToken: string })
 }
 
 /**
+ * Obtém detalhes de uma organização (incluindo plano).
+ */
+export async function getSupabaseOrganization(params: {
+  accessToken: string;
+  organizationSlug: string;
+}): Promise<
+  | { ok: true; organization: { slug: string; name: string; plan?: string }; response: unknown }
+  | { ok: false; error: string; status?: number; response?: unknown }
+> {
+  const res = await supabaseManagementFetch(
+    `/v1/organizations/${encodeURIComponent(params.organizationSlug)}`,
+    params.accessToken,
+    { method: 'GET' }
+  );
+  if (!res.ok) return { ok: false, error: res.error, status: res.status, response: res.data };
+
+  const data = res.data as Record<string, unknown>;
+  return {
+    ok: true,
+    organization: {
+      slug: typeof data?.slug === 'string' ? data.slug : params.organizationSlug,
+      name: typeof data?.name === 'string' ? data.name : '',
+      plan: typeof data?.plan === 'string' ? data.plan : undefined,
+    },
+    response: res.data,
+  };
+}
+
+/**
+ * Lista todos os projetos de uma organização específica.
+ */
+export async function listOrganizationProjects(params: {
+  accessToken: string;
+  organizationSlug: string;
+}): Promise<
+  | { ok: true; projects: Array<{ ref: string; name: string; status?: string; region?: string }>; response: unknown }
+  | { ok: false; error: string; status?: number; response?: unknown }
+> {
+  // A API de projetos retorna todos os projetos, filtramos por org
+  const allProjects = await listSupabaseProjects({ accessToken: params.accessToken });
+  if (!allProjects.ok) return allProjects;
+
+  const orgProjects = allProjects.projects.filter(
+    (p) => p.organizationSlug === params.organizationSlug
+  );
+
+  return { ok: true, projects: orgProjects, response: allProjects.response };
+}
+
+/**
  * Lista projetos de uma organização Supabase.
  */
 export async function listSupabaseProjects(params: { accessToken: string }): Promise<
@@ -231,25 +327,35 @@ export async function listSupabaseProjects(params: { accessToken: string }): Pro
 
 /**
  * Cria um novo projeto Supabase.
+ *
+ * @param region - Região explícita (ex: 'us-east-1'). Tem prioridade sobre regionSmartGroup.
+ * @param regionSmartGroup - Seleção inteligente de região (deprecated, prefer region).
  */
 export async function createSupabaseProject(params: {
   accessToken: string;
   organizationSlug: string;
   name: string;
   dbPass: string;
+  region?: string;
   regionSmartGroup?: 'americas' | 'emea' | 'apac';
 }): Promise<
   | { ok: true; projectRef: string; projectName: string; response: unknown }
   | { ok: false; error: string; status?: number; response?: unknown }
 > {
-  const body = {
+  // Região explícita tem prioridade sobre smartGroup
+  const body: Record<string, unknown> = {
     name: params.name,
     organization_slug: params.organizationSlug,
     db_pass: params.dbPass,
-    region_selection: params.regionSmartGroup
-      ? { type: 'smartGroup', code: params.regionSmartGroup }
-      : undefined,
   };
+
+  if (params.region) {
+    // Usar região explícita (mais previsível, melhor para co-localização com Vercel)
+    body.region = params.region;
+  } else if (params.regionSmartGroup) {
+    // Fallback para smart group (pode escolher região mais distante)
+    body.region_selection = { type: 'smartGroup', code: params.regionSmartGroup };
+  }
 
   const res = await supabaseManagementFetch('/v1/projects', params.accessToken, {
     method: 'POST',

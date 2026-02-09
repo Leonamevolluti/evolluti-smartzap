@@ -266,8 +266,12 @@ export function useMessages(conversationId: string | null) {
   }, [conversationId, queryClient])
 
   // Flatten messages from all pages
+  // IMPORTANT: Reverse pages order because newer pages are added at the end by React Query,
+  // but they contain OLDER messages (loaded via "before" cursor for backward pagination).
+  // Without reverse: [recent msgs] + [older msgs] = wrong chronological order
+  // With reverse: [older msgs] + [recent msgs] = correct chronological order
   const messages: InboxMessage[] =
-    messagesQuery.data?.pages.flatMap((page) => page.messages) ?? []
+    messagesQuery.data?.pages.slice().reverse().flatMap((page) => page.messages) ?? []
 
   // Send message mutation
   const sendMutation = useMutation({

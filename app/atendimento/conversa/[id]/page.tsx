@@ -162,12 +162,13 @@ function MessageBubble({ message }: { message: Message }) {
     <div className={`flex ${isOutbound ? 'justify-end' : 'justify-start'} mb-3`}>
       <div
         className={`
-          relative max-w-[75%] px-4 py-2.5 rounded-2xl
+          relative px-4 py-2.5 rounded-2xl
           ${isOutbound
             ? 'bg-[var(--chat-bubble-outbound)] text-[var(--chat-bubble-outbound-text)] rounded-br-sm'
             : 'bg-[var(--chat-bubble-inbound)] text-[var(--chat-bubble-inbound-text)] rounded-bl-sm border border-[var(--geist-border)]'
           }
         `}
+        style={{ maxWidth: 'min(75%, 500px)' }}
       >
         {/* AI Badge */}
         {message.is_ai_generated && (
@@ -262,6 +263,19 @@ function Header({
   )
 }
 
+function formatWaitTime(dateString: string): string {
+  const date = new Date(dateString)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / (1000 * 60))
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+
+  if (diffMins < 1) return 'agora'
+  if (diffMins < 60) return `há ${diffMins}min`
+  if (diffHours < 24) return `há ${diffHours}h`
+  return `há mais de 1 dia`
+}
+
 function StatusBar({
   status,
   onTakeOver,
@@ -269,6 +283,7 @@ function StatusBar({
   isLoading,
   canReply,
   canHandoff,
+  lastMessageAt,
 }: {
   status: ConversationStatus
   onTakeOver: () => void
@@ -276,12 +291,14 @@ function StatusBar({
   isLoading: boolean
   canReply: boolean
   canHandoff: boolean
+  lastMessageAt?: string
 }) {
   if (!canReply) return null
 
   const isAIActive = status === 'ai_active' || status === 'handoff_requested'
   const isUrgent = status === 'handoff_requested'
   const isHuman = status === 'human_active'
+  const waitTime = lastMessageAt && isUrgent ? formatWaitTime(lastMessageAt) : null
 
   // Colors based on status - simplified palette (green, red, neutral)
   const getStatusStyles = () => {
@@ -314,7 +331,7 @@ function StatusBar({
           <>
             <AlertCircle size={16} style={{ color: statusStyles.iconColor }} />
             <span className="text-[13px] font-medium" style={{ color: statusStyles.textColor }}>
-              Cliente aguardando atendimento
+              Cliente aguardando {waitTime || 'atendimento'}
             </span>
           </>
         ) : isAIActive ? (
@@ -557,6 +574,7 @@ export default function ConversaPage() {
         isLoading={takeoverMutation.isPending || returnMutation.isPending}
         canReply={canReply}
         canHandoff={canHandoff}
+        lastMessageAt={conversation.last_message_at}
       />
 
       {/* Messages */}

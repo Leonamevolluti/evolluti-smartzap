@@ -10,7 +10,8 @@ import { loginUser, isSetupComplete } from '@/lib/user-auth'
 export async function POST(request: NextRequest) {
   try {
     // Check if setup is complete
-    if (!(await isSetupComplete())) {
+    const setupComplete = await isSetupComplete()
+    if (!setupComplete) {
       return NextResponse.json(
         { error: 'Setup não concluído', needsSetup: true },
         { status: 400 }
@@ -19,7 +20,6 @@ export async function POST(request: NextRequest) {
     
     const body = await request.json()
     const { password } = body
-    
     if (!password) {
       return NextResponse.json(
         { error: 'Senha é obrigatória' },

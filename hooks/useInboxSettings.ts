@@ -59,9 +59,9 @@ export function useInboxSettings() {
     isUpdating: mutation.isPending,
     updateError: mutation.error,
 
-    // Convenience getters with defaults
-    humanModeTimeoutHours: query.data?.human_mode_timeout_hours ?? 24,
-    retentionDays: query.data?.retention_days ?? 90,
+    // Convenience getters with defaults (0 = nunca expira)
+    humanModeTimeoutHours: query.data?.human_mode_timeout_hours ?? 0,
+    retentionDays: query.data?.retention_days ?? 365,
   }
 }
 

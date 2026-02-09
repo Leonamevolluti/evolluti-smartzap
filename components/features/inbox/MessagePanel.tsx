@@ -211,7 +211,7 @@ export function MessagePanel({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-3 py-2"
+        className="flex-1 overflow-y-auto px-3 py-2 min-w-0"
       >
         {/* Load more indicator */}
         {isLoadingMore && (
@@ -252,7 +252,7 @@ export function MessagePanel({
             <p className="text-xs text-[var(--ds-text-muted)]">Nenhuma mensagem ainda</p>
           </div>
         ) : (
-          <div className="flex flex-col">
+          <div className="flex flex-col w-full">
             {messages.map((message, index) => {
               // Determine grouping
               const prevMessage = messages[index - 1]

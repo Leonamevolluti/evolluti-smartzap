@@ -70,48 +70,97 @@ export async function GET() {
 
   // 1. Database Usage (Supabase)
   try {
-    const { createClient } = await import('@supabase/supabase-js')
-    const serviceKey = process.env.SUPABASE_SECRET_KEY
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseAccessToken = process.env.SUPABASE_ACCESS_TOKEN
 
-    if (!serviceKey || !url) {
-      throw new Error('Missing Supabase credentials in Usage API')
+    // Extrair project ref da URL (ex: https://abc123xyz.supabase.co -> abc123xyz)
+    const projectRef = supabaseUrl?.match(/https:\/\/([^.]+)\.supabase\.co/)?.[1]
+
+    if (supabaseAccessToken && projectRef) {
+      // Usar Management API para dados reais de uso
+      const usageResponse = await fetchWithTimeout(
+        `https://api.supabase.com/v1/projects/${projectRef}/usage?metric=DISK_SIZE`,
+        {
+          headers: { 'Authorization': `Bearer ${supabaseAccessToken}` },
+          timeoutMs: 5000,
+        }
+      )
+
+      if (usageResponse.ok) {
+        const usageData = await usageResponse.json()
+        // A API retorna usage em bytes, converter para MB
+        const diskBytes = usageData?.disk_size?.usage || usageData?.usage || 0
+        usage.database.storageMB = Math.round((diskBytes / (1024 * 1024)) * 100) / 100
+        usage.database.percentage = Math.round((usage.database.storageMB / usage.database.limitMB) * 100 * 10) / 10
+        usage.database.status = getStatus(usage.database.percentage)
+      } else {
+        // Fallback: estimar baseado em contagem de rows
+        throw new Error('Management API failed, using fallback')
+      }
+    } else {
+      // Fallback: estimar baseado em contagem de rows (sem PAT configurado)
+      const { createClient } = await import('@supabase/supabase-js')
+      const serviceKey = process.env.SUPABASE_SECRET_KEY
+
+      if (!serviceKey || !supabaseUrl) {
+        throw new Error('Missing Supabase credentials in Usage API')
+      }
+
+      const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+        auth: { persistSession: false }
+      })
+
+      const { count: campaignsCount } = await supabaseAdmin
+        .from('campaigns')
+        .select('*', { count: 'exact', head: true })
+
+      const { count: contactsCount } = await supabaseAdmin
+        .from('contacts')
+        .select('*', { count: 'exact', head: true })
+
+      const { count: campaignContactsCount } = await supabaseAdmin
+        .from('campaign_contacts')
+        .select('*', { count: 'exact', head: true })
+
+      const totalRows =
+        (campaignsCount || 0) +
+        (contactsCount || 0) +
+        (campaignContactsCount || 0)
+
+      // Estimativa: ~1KB por row (valor aproximado)
+      const estimatedStorageMB = Math.round((totalRows * 1024) / (1024 * 1024) * 100) / 100
+
+      usage.database.storageMB = estimatedStorageMB
+      usage.database.percentage = Math.round((usage.database.storageMB / usage.database.limitMB) * 100 * 10) / 10
+      usage.database.status = getStatus(usage.database.percentage)
     }
-
-    const supabaseAdmin = createClient(url, serviceKey, {
-      auth: { persistSession: false }
-    })
-
-    const { count: campaignsCount } = await supabaseAdmin
-      .from('campaigns')
-      .select('*', { count: 'exact', head: true })
-
-    const { count: contactsCount } = await supabaseAdmin
-      .from('contacts')
-      .select('*', { count: 'exact', head: true })
-
-    const { count: campaignContactsCount } = await supabaseAdmin
-      .from('campaign_contacts')
-      .select('*', { count: 'exact', head: true })
-
-    const totalRows =
-      (campaignsCount || 0) +
-      (contactsCount || 0) +
-      (campaignContactsCount || 0)
-
-    const estimatedStorageMB = Math.round((totalRows * 1024) / (1024 * 1024) * 100) / 100
-
-    usage.database.storageMB = estimatedStorageMB
-    usage.database.percentage = Math.round((usage.database.storageMB / usage.database.limitMB) * 100 * 10) / 10
-    usage.database.status = getStatus(usage.database.percentage)
   } catch (e) {
     console.error('Failed to get Database usage:', e)
   }
 
   // 2. QStash Usage
   try {
-    const upstashEmail = process.env.UPSTASH_EMAIL
-    const upstashApiKey = process.env.UPSTASH_API_KEY
+    // Tentar env vars primeiro, depois banco de dados
+    let upstashEmail = process.env.UPSTASH_EMAIL
+    let upstashApiKey = process.env.UPSTASH_API_KEY
+
+    // Se não tiver env var, buscar do banco
+    if (!upstashEmail || !upstashApiKey) {
+      try {
+        const { data: settingsData } = await supabase
+          .from('settings')
+          .select('key, value')
+          .in('key', ['upstashEmail', 'upstashApiKey'])
+
+        if (settingsData) {
+          const settingsMap = new Map(settingsData.map(s => [s.key, s.value]))
+          upstashEmail = upstashEmail || (settingsMap.get('upstashEmail') as string) || ''
+          upstashApiKey = upstashApiKey || (settingsMap.get('upstashApiKey') as string) || ''
+        }
+      } catch {
+        // Ignore errors fetching from DB
+      }
+    }
 
     if (upstashEmail && upstashApiKey && process.env.QSTASH_TOKEN) {
       const auth = Buffer.from(`${upstashEmail}:${upstashApiKey}`).toString('base64')

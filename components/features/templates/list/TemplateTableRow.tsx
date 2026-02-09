@@ -2,10 +2,11 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { FileText, Check, Loader2, Trash2, Eye, Pencil, Send, Megaphone } from 'lucide-react';
+import { FileText, Check, Loader2, Trash2, Eye, Send, Megaphone, Copy } from 'lucide-react';
 import { Template } from '../../../../types';
 import { StatusBadge } from './StatusBadge';
 import { Button } from '@/components/ui/button';
+import { WhatsAppInlineText } from '@/components/ui/whatsapp-text';
 
 export interface TemplateTableRowProps {
   template: Template;
@@ -13,6 +14,7 @@ export interface TemplateTableRowProps {
   isRowSelected: boolean;
   isSubmitting: boolean;
   isDeletingDraft: boolean;
+  isCloning?: boolean;
   canSend: boolean;
   sendReason?: string;
   // Selection handlers
@@ -23,6 +25,7 @@ export interface TemplateTableRowProps {
   onSubmitDraft: () => void;
   onDeleteDraft: () => void;
   onCreateCampaign?: () => void;
+  onCloneTemplate?: () => void;
   // Hover handlers
   onMouseEnter: () => void;
   onMouseLeave: () => void;
@@ -35,6 +38,7 @@ const TemplateTableRowComponent: React.FC<TemplateTableRowProps> = ({
   isRowSelected,
   isSubmitting,
   isDeletingDraft,
+  isCloning,
   canSend,
   sendReason,
   onToggleSelection,
@@ -43,18 +47,12 @@ const TemplateTableRowComponent: React.FC<TemplateTableRowProps> = ({
   onSubmitDraft,
   onDeleteDraft,
   onCreateCampaign,
+  onCloneTemplate,
   onMouseEnter,
   onMouseLeave,
   onPrefetchPreview,
 }) => {
   const draftHref = `/templates/drafts/${encodeURIComponent(template.id)}`;
-
-  const handleRowEnter = () => {
-    onMouseEnter();
-    if (!isManualDraft && onPrefetchPreview) {
-      onPrefetchPreview();
-    }
-  };
 
   const handleCellClick = () => {
     if (!isManualDraft) {
@@ -62,13 +60,21 @@ const TemplateTableRowComponent: React.FC<TemplateTableRowProps> = ({
     }
   };
 
+  // Handler para hover no ícone de preview (Eye)
+  const handlePreviewEnter = () => {
+    onMouseEnter();
+    if (!isManualDraft && onPrefetchPreview) {
+      onPrefetchPreview();
+    }
+  };
+
   return (
     <tr
-      onMouseEnter={handleRowEnter}
-      onMouseLeave={onMouseLeave}
       className={`hover:bg-[var(--ds-bg-hover)] transition-colors group cursor-pointer ${
         isRowSelected ? (isManualDraft ? 'bg-amber-500/5' : 'bg-emerald-500/5') : ''
       }`}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       {/* Checkbox */}
       <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
@@ -123,7 +129,7 @@ const TemplateTableRowComponent: React.FC<TemplateTableRowProps> = ({
       </td>
 
       {/* Status */}
-      <td className="px-4 py-4" onClick={handleCellClick}>
+      <td className="px-2 py-4" onClick={handleCellClick}>
         {isManualDraft ? (
           <Link href={draftHref} className="inline-block" title="Continuar edicao">
             <StatusBadge status={template.status} />
@@ -134,7 +140,7 @@ const TemplateTableRowComponent: React.FC<TemplateTableRowProps> = ({
       </td>
 
       {/* Category */}
-      <td className="px-4 py-4" onClick={handleCellClick}>
+      <td className="px-2 py-4" onClick={handleCellClick}>
         <span
           className={`inline-flex items-center rounded-md border px-2 py-1 text-xs font-medium ${
             template.category === 'UTILIDADE'
@@ -148,37 +154,24 @@ const TemplateTableRowComponent: React.FC<TemplateTableRowProps> = ({
         </span>
       </td>
 
-      {/* Language */}
-      <td className="px-4 py-4 text-[var(--ds-text-muted)] font-mono text-xs" onClick={handleCellClick}>
-        {isManualDraft ? (
-          <Link href={draftHref} className="hover:text-[var(--ds-text-secondary)]" title="Continuar edicao">
-            {template.language}
-          </Link>
-        ) : (
-          template.language
-        )}
-      </td>
-
       {/* Content */}
-      <td className="px-4 py-4 max-w-xs" onClick={handleCellClick}>
+      <td className="px-3 py-4" onClick={handleCellClick}>
         {isManualDraft ? (
           <Link href={draftHref} className="block" title="Continuar edicao">
             <p className="text-sm text-[var(--ds-text-secondary)] truncate" title={template.content}>
-              {template.content.slice(0, 50)}
-              {template.content.length > 50 ? '...' : ''}
+              <WhatsAppInlineText text={template.content.replace(/\n/g, ' ').slice(0, 80) + (template.content.length > 80 ? '...' : '')} />
             </p>
           </Link>
         ) : (
           <p className="text-sm text-[var(--ds-text-secondary)] truncate" title={template.content}>
-            {template.content.slice(0, 50)}
-            {template.content.length > 50 ? '...' : ''}
+            <WhatsAppInlineText text={template.content.replace(/\n/g, ' ').slice(0, 80) + (template.content.length > 80 ? '...' : '')} />
           </p>
         )}
       </td>
 
       {/* Updated */}
       <td
-        className="px-4 py-4 text-[var(--ds-text-muted)] font-mono text-xs whitespace-nowrap"
+        className="px-2 py-4 text-[var(--ds-text-muted)] font-mono text-xs whitespace-nowrap"
         onClick={handleCellClick}
       >
         {isManualDraft ? (
@@ -191,16 +184,10 @@ const TemplateTableRowComponent: React.FC<TemplateTableRowProps> = ({
       </td>
 
       {/* Actions */}
-      <td className="px-4 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+      <td className="px-2 py-4 text-right" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-end gap-1">
           {isManualDraft ? (
             <>
-              <Button variant="outline" size="sm" asChild>
-                <Link href={draftHref} title="Continuar edicao">
-                  <Pencil size={14} />
-                  Continuar
-                </Link>
-              </Button>
               <Button
                 variant="brand"
                 size="sm"
@@ -239,6 +226,21 @@ const TemplateTableRowComponent: React.FC<TemplateTableRowProps> = ({
               >
                 <Eye size={16} />
               </Button>
+              {onCloneTemplate && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={onCloneTemplate}
+                  disabled={isCloning}
+                  title="Clonar como rascunho"
+                >
+                  {isCloning ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Copy size={16} />
+                  )}
+                </Button>
+              )}
               {template.status === 'APPROVED' && onCreateCampaign && (
                 <Button
                   variant="ghost"
@@ -273,13 +275,13 @@ export const TemplateTableRow = React.memo(TemplateTableRowComponent, (prev, nex
   if (prev.template.name !== next.template.name) return false;
   if (prev.template.status !== next.template.status) return false;
   if (prev.template.category !== next.template.category) return false;
-  if (prev.template.language !== next.template.language) return false;
   if (prev.template.content !== next.template.content) return false;
   if (prev.template.lastUpdated !== next.template.lastUpdated) return false;
   if (prev.isManualDraft !== next.isManualDraft) return false;
   if (prev.isRowSelected !== next.isRowSelected) return false;
   if (prev.isSubmitting !== next.isSubmitting) return false;
   if (prev.isDeletingDraft !== next.isDeletingDraft) return false;
+  if (prev.isCloning !== next.isCloning) return false;
   if (prev.canSend !== next.canSend) return false;
   if (prev.sendReason !== next.sendReason) return false;
 

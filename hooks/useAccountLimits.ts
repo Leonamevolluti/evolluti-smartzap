@@ -119,7 +119,6 @@ export function useAccountLimits() {
   const validate = (contactCount: number): CampaignValidation => {
     // 🧪 DEBUG MODE: Use test limits with very low threshold
     if (DEBUG_LOW_LIMIT) {
-      console.log('🧪 DEBUG: Using test limits (max 5 messages)');
       return validateCampaign(contactCount, TEST_LIMITS);
     }
     

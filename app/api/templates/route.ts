@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getWhatsAppCredentials } from '@/lib/whatsapp-credentials'
 import { templateDb } from '@/lib/supabase-db'
+import { supabase } from '@/lib/supabase'
 import { canonicalTemplateCategory } from '@/lib/template-category'
 import { createHash } from 'crypto'
 import { fetchWithTimeout, safeJson } from '@/lib/server-http'
@@ -14,6 +15,13 @@ interface MetaTemplateComponent {
   format?: string
   text?: string
   buttons?: Array<{ type: string; text: string; url?: string; phone_number?: string }>
+  // Para LOCATION headers
+  location?: {
+    latitude: string
+    longitude: string
+    name?: string
+    address?: string
+  }
 }
 
 interface MetaTemplate {
@@ -99,6 +107,7 @@ async function fetchTemplatesFromMeta(businessAccountId: string, accessToken: st
 
 // Helper to sync templates to local Supabase DB
 // This ensures templateDb.getByName() works during campaign dispatch
+// IMPORTANTE: Faz FULL REPLACE - deleta templates antigos que não existem mais na Meta
 async function syncTemplatesToLocalDb(templates: ReturnType<typeof fetchTemplatesFromMeta> extends Promise<infer T> ? T : never) {
   try {
     const now = new Date().toISOString()
@@ -114,6 +123,31 @@ async function syncTemplatesToLocalDb(templates: ReturnType<typeof fetchTemplate
       fetched_at: (template as any).fetchedAt || now,
     }))
 
+    // Criar set de (name, language) dos templates da Meta para comparação
+    const metaTemplateKeys = new Set(
+      templates.map((t) => `${t.name}::${t.language}`)
+    )
+
+    // Buscar templates locais para identificar os que devem ser removidos
+    const localTemplates = await templateDb.getAll()
+    const templatesToDelete = localTemplates.filter(
+      (t) => !metaTemplateKeys.has(`${t.name}::${t.language}`)
+    )
+
+    // Deletar templates que não existem mais na Meta
+    if (templatesToDelete.length > 0) {
+      for (const t of templatesToDelete) {
+        await supabase
+          .from('templates')
+          .delete()
+          .eq('name', t.name)
+          .eq('language', t.language)
+      }
+
+      console.log(`[Templates] 🗑️ Removidos ${templatesToDelete.length} templates que não existem mais na Meta`)
+    }
+
+    // Upsert dos templates atuais da Meta
     // Ambientes antigos podem não ter as colunas parameter_format/spec_hash/fetched_at ainda.
     try {
       await templateDb.upsert(rows)
@@ -181,14 +215,23 @@ export async function GET(request: NextRequest) {
     // Importante: aguardamos para evitar race condition com /api/campaign/precheck.
     await syncTemplatesToLocalDb(templates)
 
-    // Merge com dados locais (ex.: cache de preview de mídia).
+    // Merge com dados locais (ex.: cache de preview de mídia e header_location).
     const local = await templateDb.getAll().catch(() => [])
     const localByName = new Map(local.map((t) => [t.name, t]))
     const merged = templates.map((t) => {
       const cached = localByName.get(t.name)
       if (!cached) return t
+
+      // Se o template local tem location injetado no header, usar os components locais
+      // para garantir que o preview funcione corretamente
+      const localHasLocation = cached.components?.some(
+        (c: any) => c.type === 'HEADER' && c.format === 'LOCATION' && c.location
+      )
+
       return {
         ...t,
+        // Usar components locais se tiver location injetado
+        components: localHasLocation ? cached.components : t.components,
         headerMediaPreviewUrl: cached.headerMediaPreviewUrl ?? null,
         headerMediaPreviewExpiresAt: cached.headerMediaPreviewExpiresAt ?? null,
         headerMediaId: cached.headerMediaId ?? null,

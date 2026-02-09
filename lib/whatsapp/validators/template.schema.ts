@@ -79,82 +79,11 @@ export const FlowButtonSchema = z.object({
     navigate_screen: z.string().optional(),
 });
 
-// 7. Catalog Button - Ver catálogo
-/** Schema Zod para botão do tipo CATALOG (abrir catálogo). */
-export const CatalogButtonSchema = z.object({
-    type: z.literal('CATALOG'),
-    text: z.string().min(1).max(25).default('Ver catálogo'),
-});
+// Nota: Tipos como CATALOG, MPM, VOICE_CALL, EXTENSION, ORDER_DETAILS, POSTBACK,
+// REMINDER, SEND_LOCATION, SPM NÃO são suportados pela Meta API para templates
+// de mensagem e foram removidos.
 
-// 8. MPM Button - Multi-Product Message
-/** Schema Zod para botão do tipo MPM (multi-produto). */
-export const MpmButtonSchema = z.object({
-    type: z.literal('MPM'),
-    text: z.string().min(1).max(25).default('Ver produtos'),
-});
-
-// 9. Voice Call Button - Chamada de voz
-/** Schema Zod para botão do tipo VOICE_CALL (chamada de voz). */
-export const VoiceCallButtonSchema = z.object({
-    type: z.literal('VOICE_CALL'),
-    text: z.string().min(1).max(25, 'Botão: máximo 25 caracteres'),
-});
-
-// 10. Extension Button - Tipos adicionais documentados
-/** Schema Zod para botão do tipo EXTENSION. */
-export const ExtensionButtonSchema = z.object({
-    type: z.literal('EXTENSION'),
-    text: z.string().max(25).optional(),
-    payload: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
-    action: z.record(z.string(), z.unknown()).optional(),
-});
-
-// 11. Order Details Button
-/** Schema Zod para botão do tipo ORDER_DETAILS. */
-export const OrderDetailsButtonSchema = z.object({
-    type: z.literal('ORDER_DETAILS'),
-    text: z.string().max(25).optional(),
-    payload: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
-    action: z.record(z.string(), z.unknown()).optional(),
-});
-
-// 12. Postback Button
-/** Schema Zod para botão do tipo POSTBACK. */
-export const PostbackButtonSchema = z.object({
-    type: z.literal('POSTBACK'),
-    text: z.string().max(25).optional(),
-    payload: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
-    action: z.record(z.string(), z.unknown()).optional(),
-});
-
-// 13. Reminder Button
-/** Schema Zod para botão do tipo REMINDER. */
-export const ReminderButtonSchema = z.object({
-    type: z.literal('REMINDER'),
-    text: z.string().max(25).optional(),
-    payload: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
-    action: z.record(z.string(), z.unknown()).optional(),
-});
-
-// 14. Send Location Button
-/** Schema Zod para botão do tipo SEND_LOCATION. */
-export const SendLocationButtonSchema = z.object({
-    type: z.literal('SEND_LOCATION'),
-    text: z.string().max(25).optional(),
-    payload: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
-    action: z.record(z.string(), z.unknown()).optional(),
-});
-
-// 15. Single Product Message Button
-/** Schema Zod para botão do tipo SPM. */
-export const SpmButtonSchema = z.object({
-    type: z.literal('SPM'),
-    text: z.string().max(25).optional(),
-    payload: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
-    action: z.record(z.string(), z.unknown()).optional(),
-});
-
-// Union de todos os tipos de botão
+// Union de todos os tipos de botão suportados pela Meta
 /**
  * Union discriminada (`type`) de todos os tipos de botões suportados.
  *
@@ -167,15 +96,6 @@ export const ButtonSchema = z.discriminatedUnion('type', [
     CopyCodeButtonSchema,
     OtpButtonSchema,
     FlowButtonSchema,
-    CatalogButtonSchema,
-    MpmButtonSchema,
-    VoiceCallButtonSchema,
-    ExtensionButtonSchema,
-    OrderDetailsButtonSchema,
-    PostbackButtonSchema,
-    ReminderButtonSchema,
-    SendLocationButtonSchema,
-    SpmButtonSchema,
 ]);
 
 // =========================
@@ -199,6 +119,13 @@ export const HeaderSchema = z.object({
             example: z.string().min(1),
         })).optional(),
         header_handle: z.array(z.string()).optional(), // ID da mídia uploadada
+    }).optional().nullable(),
+    // Para LOCATION
+    location: z.object({
+        latitude: z.string().min(1, 'Latitude obrigatória'),
+        longitude: z.string().min(1, 'Longitude obrigatória'),
+        name: z.string().optional(),
+        address: z.string().optional(),
     }).optional().nullable(),
 }).optional().nullable();
 
@@ -331,11 +258,12 @@ export const CreateTemplateSchema = z.object({
     const textHasEdgeParameter = (text: string) => {
         // A Meta considera inválido quando o primeiro/último "token" útil é uma variável.
         // Isso inclui casos como "{{1}}!" (pontuação no fim) e "( {{1}} )".
-        // Então removemos pontuação/símbolos nas bordas antes de checar.
+        // Removemos pontuação/símbolos nas bordas, EXCETO { e } que fazem parte das variáveis.
+        // Nota: \p{P} inclui { e }, então usamos negação explícita [^\s{}] para preservá-los.
         const trimmed = text
             .trim()
-            .replace(/^[\s\p{P}\p{S}]+/gu, '')
-            .replace(/[\s\p{P}\p{S}]+$/gu, '')
+            .replace(/^(?:[\s]|(?![{}])[\p{P}\p{S}])+/gu, '')
+            .replace(/(?:[\s]|(?![{}])[\p{P}\p{S}])+$/gu, '')
         if (!trimmed) return { starts: false, ends: false }
         return {
             starts: /^\{\{\s*[^}]+\s*\}\}/.test(trimmed),
@@ -605,6 +533,11 @@ export const CreateTemplateSchema = z.object({
             message: 'Cabeçalho de texto exige um valor.'
         })
     }
+
+    // LOCATION header: latitude e longitude são salvos localmente (coluna header_location),
+    // mas NÃO são enviados na criação do template para a Meta.
+    // A validação de location é feita no momento do ENVIO (buildMetaTemplatePayload),
+    // não na criação do template.
 
     // Media header: exige header_handle.
     if (data.header?.format && ['IMAGE', 'VIDEO', 'GIF', 'DOCUMENT'].includes(String(data.header.format))) {

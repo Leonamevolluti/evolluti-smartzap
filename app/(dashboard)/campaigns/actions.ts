@@ -59,7 +59,7 @@ export const getCampaignsInitialData = cache(async (): Promise<CampaignListResul
       name: c.name,
       templateName: c.template_name || '',
       status: c.status,
-      recipients: c.recipients || 0,
+      recipients: c.total_recipients || 0,
       sent: c.sent || 0,
       delivered: c.delivered || 0,
       read: c.read || 0,

@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { createClient } from '@/utils/supabase/client';
 import { cn } from '@/lib/utils';
+import { manualDraftsService } from '@/services/manualDraftsService';
 import { WhatsAppPhonePreview } from '@/components/ui/WhatsAppPhonePreview';
 import { Page, PageActions, PageDescription, PageHeader, PageTitle } from '@/components/ui/page';
 
@@ -92,70 +93,165 @@ export default function TemplateProjectDetailsPage() {
         }
     };
 
-    // Bulk Submit Mutation
+    /**
+     * Normaliza variáveis de template para serem sequenciais
+     * Problema: AI às vezes gera {{1}}, {{5}}, {{6}} em vez de {{1}}, {{2}}, {{3}}
+     * Solução: Renumera todas as variáveis para serem sequenciais
+     */
+    const normalizeTemplateVariables = (item: any) => {
+        // 1. Encontra todas as variáveis usadas no template
+        const allText = [
+            item.content || '',
+            item.header?.text || '',
+            item.footer?.text || ''
+        ].join(' ');
+
+        const varPattern = /\{\{(\d+)\}\}/g;
+        const usedVars = new Set<number>();
+        let match;
+        while ((match = varPattern.exec(allText)) !== null) {
+            usedVars.add(parseInt(match[1]));
+        }
+
+        // Se não há variáveis ou já são sequenciais, retorna original
+        const sortedVars = Array.from(usedVars).sort((a, b) => a - b);
+        const isSequential = sortedVars.every((v, i) => v === i + 1);
+
+        if (sortedVars.length === 0 || isSequential) {
+            // Retorna sample_variables como array ordenado
+            let exampleVariables: string[] = [];
+            if (item.sample_variables && typeof item.sample_variables === 'object') {
+                const keys = Object.keys(item.sample_variables)
+                    .filter(k => /^\d+$/.test(k))
+                    .sort((a, b) => Number(a) - Number(b));
+                exampleVariables = keys.map(k => item.sample_variables[k]);
+            }
+            return {
+                content: item.content,
+                header: item.header,
+                exampleVariables
+            };
+        }
+
+        // 2. Cria mapeamento: variável original -> nova posição sequencial
+        const varMapping: Record<number, number> = {};
+        sortedVars.forEach((oldVar, index) => {
+            varMapping[oldVar] = index + 1;
+        });
+
+        // 3. Substitui variáveis no content e header
+        const replaceVars = (text: string) => {
+            return text.replace(/\{\{(\d+)\}\}/g, (_, num) => {
+                const newNum = varMapping[parseInt(num)] || num;
+                return `{{${newNum}}}`;
+            });
+        };
+
+        const normalizedContent = replaceVars(item.content || '');
+        const normalizedHeader = item.header ? {
+            ...item.header,
+            text: item.header.text ? replaceVars(item.header.text) : item.header.text
+        } : item.header;
+
+        // 4. Reorganiza sample_variables com novas posições
+        let exampleVariables: string[] = [];
+        if (item.sample_variables && typeof item.sample_variables === 'object') {
+            // Mapeia valores antigos para novas posições
+            const newSampleVars: Record<string, string> = {};
+            for (const [oldKey, newKey] of Object.entries(varMapping)) {
+                if (item.sample_variables[oldKey]) {
+                    newSampleVars[String(newKey)] = item.sample_variables[oldKey];
+                }
+            }
+            // Converte para array ordenado
+            const keys = Object.keys(newSampleVars)
+                .filter(k => /^\d+$/.test(k))
+                .sort((a, b) => Number(a) - Number(b));
+            exampleVariables = keys.map(k => newSampleVars[k]);
+        }
+
+        // Se ainda faltam examples, preenche com placeholder
+        const maxVar = sortedVars.length;
+        while (exampleVariables.length < maxVar) {
+            exampleVariables.push(`Valor ${exampleVariables.length + 1}`);
+        }
+
+        return {
+            content: normalizedContent,
+            header: normalizedHeader,
+            exampleVariables
+        };
+    };
+
+    // Bulk Submit Mutation - Envia todos templates em paralelo via única chamada à API
     const bulkSubmitMutation = useMutation({
         mutationFn: async (itemIds: string[]) => {
             const itemsToSubmit = (project?.items || []).filter((i: any) => itemIds.includes(i.id));
+
+            // Prepara todos os payloads de uma vez
+            const templates = itemsToSubmit.map(item => {
+                // Normaliza variáveis para serem sequenciais (corrige bug do AI)
+                const normalized = normalizeTemplateVariables(item);
+
+                return {
+                    itemId: item.id, // ID for server-side DB update
+                    projectId: id,
+                    name: item.name,
+                    category: item.category || 'UTILITY', // Use item category (MARKETING/UTILITY)
+                    language: item.language || 'pt_BR',
+                    content: normalized.content,
+                    header: normalized.header,
+                    footer: item.footer,
+                    buttons: item.buttons,
+                    // Inclui variáveis de exemplo normalizadas (necessário para Meta API)
+                    exampleVariables: normalized.exampleVariables
+                };
+            });
+
+            // Envia todos de uma vez - API processa em paralelo
+            const response = await fetch('/api/templates/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ templates })
+            });
+
+            const result = await response.json();
+
+            // Processa resposta da API (pode ser sucesso total, parcial ou falha)
             const successes: string[] = [];
             const errors: Array<{ name: string; error: string }> = [];
 
-            for (const item of itemsToSubmit) {
-                try {
-                    // Converte sample_variables (Record<string, string>) para array ordenado
-                    // Ex: {"1": "Maria", "2": "Pedido"} -> ["Maria", "Pedido"]
-                    let exampleVariables: string[] = [];
-                    if (item.sample_variables && typeof item.sample_variables === 'object') {
-                        const sampleVars = item.sample_variables;
-                        const keys = Object.keys(sampleVars)
-                            .filter(k => /^\d+$/.test(k))
-                            .sort((a, b) => Number(a) - Number(b));
-                        exampleVariables = keys.map(k => sampleVars[k]);
-                    }
-
-                    const payload = {
-                        itemId: item.id, // ID for server-side DB update
-                        projectId: id,
-                        name: item.name,
-                        category: item.category || 'UTILITY', // Use item category (MARKETING/UTILITY)
-                        language: item.language || 'pt_BR',
-                        content: item.content,
-                        header: item.header,
-                        footer: item.footer,
-                        buttons: item.buttons,
-                        // Inclui variáveis de exemplo do item (necessário para Meta API)
-                        exampleVariables
-                    };
-
-                    const response = await fetch('/api/templates/create', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    const result = await response.json();
-
-                    // A API retorna erro com status 400/500 ou sucesso com objeto direto
-                    if (!response.ok) {
-                        // Erro retornado pela API (pode ter details ou error)
-                        const errorMsg = result.details?.[0]?.error || result.error || 'Erro desconhecido';
-                        throw new Error(errorMsg);
-                    }
-
-                    // Sucesso: API retorna objeto com success: true ou o template criado
-                    if (result.success || result.id) {
-                        successes.push(item.id);
-                    } else {
-                        throw new Error('Resposta inesperada da API');
-                    }
-                } catch (e: any) {
-                    console.error(`Erro ao enviar item ${item.name}`, e);
-                    errors.push({ name: item.name, error: e.message || 'Erro desconhecido' });
+            if (!response.ok) {
+                // Falha total - todos falharam
+                if (result.details) {
+                    result.details.forEach((err: any) => errors.push({ name: err.name, error: err.error }));
+                } else {
+                    errors.push({ name: 'batch', error: result.error || 'Erro desconhecido' });
                 }
+            } else if (result.failed && result.failed.length > 0) {
+                // Sucesso parcial (status 207)
+                result.created?.forEach((t: any) => {
+                    const item = itemsToSubmit.find(i => i.name === t.name);
+                    if (item) successes.push(item.id);
+                });
+                result.failed.forEach((err: any) => errors.push({ name: err.name, error: err.error }));
+            } else if (result.templates) {
+                // Sucesso total (array de templates)
+                result.templates.forEach((t: any) => {
+                    const item = itemsToSubmit.find(i => i.name === t.name);
+                    if (item) successes.push(item.id);
+                });
+            } else if (result.success || result.id) {
+                // Sucesso de template único
+                successes.push(itemsToSubmit[0]?.id);
             }
+
             return { successes, errors };
         },
         onSuccess: ({ successes, errors }) => {
+            // Invalida tanto o detalhe quanto a lista de projetos
             queryClient.invalidateQueries({ queryKey: ['template_projects', id] });
+            queryClient.invalidateQueries({ queryKey: ['template_projects'] });
             setSelectedItems([]);
 
             if (errors.length > 0 && successes.length === 0) {
@@ -205,6 +301,55 @@ export default function TemplateProjectDetailsPage() {
         }
     });
 
+    // Edit Item Mutation - Cria um draft manual e redireciona para o editor
+    const editItemMutation = useMutation({
+        mutationFn: async (item: any) => {
+            // 1. Cria um novo draft manual com os dados básicos
+            const draft = await manualDraftsService.create({
+                name: item.name,
+                language: item.language || 'pt_BR',
+                category: item.category || 'UTILITY',
+                parameterFormat: 'positional',
+            });
+
+            // 2. Constrói o spec completo com header, body, footer e buttons
+            const spec = {
+                name: item.name,
+                language: item.language || 'pt_BR',
+                category: item.category || 'UTILITY',
+                parameter_format: 'positional',
+                body: { text: item.content || '' },
+                header: item.header || null,
+                footer: item.footer || null,
+                buttons: item.buttons || [],
+                carousel: null,
+                limited_time_offer: null,
+            };
+
+            // 3. Atualiza o draft com o spec completo
+            await manualDraftsService.update(draft.id, { spec });
+
+            // 4. Remove o item do projeto
+            const response = await fetch(`/api/template-projects/items/${item.id}`, {
+                method: 'DELETE',
+            });
+            if (!response.ok) throw new Error('Falha ao remover item do projeto');
+
+            return draft.id;
+        },
+        onSuccess: (draftId) => {
+            queryClient.invalidateQueries({ queryKey: ['template_projects', id] });
+            queryClient.invalidateQueries({ queryKey: ['templates', 'drafts', 'manual'] });
+            toast.success('Abrindo editor de template...');
+            router.push(`/templates/drafts/${draftId}`);
+        },
+        onError: (error: any) => {
+            toast.error('Erro ao abrir editor', {
+                description: error.message || 'Tente novamente'
+            });
+        }
+    });
+
     // Sync Project Mutation
     const syncProjectMutation = useMutation({
         mutationFn: async () => {
@@ -213,7 +358,9 @@ export default function TemplateProjectDetailsPage() {
             return response.json();
         },
         onSuccess: () => {
+            // Invalida tanto o detalhe quanto a lista de projetos
             queryClient.invalidateQueries({ queryKey: ['template_projects', id] });
+            queryClient.invalidateQueries({ queryKey: ['template_projects'] });
             toast.success('Status atualizados da Meta!');
         },
         onError: () => {
@@ -499,18 +646,31 @@ export default function TemplateProjectDetailsPage() {
                                                                 {item.language}
                                                             </span>
                                                             {isDraft && (
-                                                                <button
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        if (confirm('Excluir este rascunho?')) {
-                                                                            deleteItemMutation.mutate(item.id);
-                                                                        }
-                                                                    }}
-                                                                    className="p-1 text-zinc-400 hover:text-amber-300 hover:bg-amber-500/10 rounded transition-colors opacity-0 group-hover:opacity-100"
-                                                                    title="Excluir rascunho"
-                                                                >
-                                                                    <Trash2 className="w-3.5 h-3.5" />
-                                                                </button>
+                                                                <>
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            editItemMutation.mutate(item);
+                                                                        }}
+                                                                        disabled={editItemMutation.isPending}
+                                                                        className="p-1 text-zinc-400 hover:text-emerald-300 hover:bg-emerald-500/10 rounded transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-50"
+                                                                        title="Editar template"
+                                                                    >
+                                                                        <Pencil className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            if (confirm('Excluir este rascunho?')) {
+                                                                                deleteItemMutation.mutate(item.id);
+                                                                            }
+                                                                        }}
+                                                                        className="p-1 text-zinc-400 hover:text-amber-300 hover:bg-amber-500/10 rounded transition-colors opacity-0 group-hover:opacity-100"
+                                                                        title="Excluir rascunho"
+                                                                    >
+                                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                </>
                                                                 )}
                                                             </div>
                                                         </div>

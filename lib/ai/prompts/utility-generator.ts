@@ -77,14 +77,19 @@ Se identificar "Boleto", "Vagas", "Curso X":
 ## REGRAS TÉCNICAS
 - Variáveis: APENAS números {{1}}, {{2}}, {{3}} (sequenciais, sem pular)
 - Use PELO MENOS 2-3 variáveis por template para flexibilidade
-- 🚫 NUNCA comece ou termine o texto com variável (ex: "{{1}} chegou" ou "...para {{2}}"). Meta rejeita.
-- ✅ Sempre envolva variáveis com texto (ex: "Olá {{1}}, seu pedido..." ou "...para {{2}} em breve.").
+
+### ⛔ REGRA CRÍTICA - VARIÁVEIS NAS BORDAS (Meta rejeita com erro 2388299):
+- 🚫 NUNCA comece o body com variável: "{{1}} chegou" ❌
+- 🚫 NUNCA termine o body com variável: "...até {{2}}." ❌ (mesmo com ponto depois!)
+- ✅ CORRETO: "Olá {{1}}, seu pedido..." (texto antes)
+- ✅ CORRETO: "...em {{2}}. Obrigado!" (texto significativo depois)
+- A Meta considera "até {{4}}." como terminando em variável (ignora pontuação)
+
 - Header: máximo 1 variável, máximo 60 caracteres
 - Body: máximo 1024 caracteres (ideal: 200-400)
 - Footer: máximo 60 caracteres
 - Botão: máximo 25 caracteres
 - Nome: snake_case, apenas letras minúsculas e underscore
-- ⚠️ NUNCA comece/termine o texto com variável
 - ⚠️ EVITE emojis
 
 ## INPUT DO USUÁRIO

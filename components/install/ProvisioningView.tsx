@@ -23,16 +23,14 @@ interface ProvisioningViewProps {
 export function ProvisioningView({ data, progress, title, subtitle, onProgress, onReset }: ProvisioningViewProps) {
   const abortControllerRef = useRef<AbortController | null>(null);
   const hasStartedRef = useRef(false);
+  const ignoreFirstCleanupRef = useRef(true);
+  const safeProgress = Math.min(100, Math.max(0, progress));
 
   const startProvisioning = useCallback(async () => {
-    console.log('[Provisioning] 🚀 startProvisioning chamado');
-
     if (hasStartedRef.current) {
-      console.log('[Provisioning] ⚠️ Já iniciado, ignorando');
       return;
     }
     hasStartedRef.current = true;
-    console.log('[Provisioning] ✅ Marcado como iniciado');
 
     abortControllerRef.current = new AbortController();
 
@@ -58,14 +56,6 @@ export function ProvisioningView({ data, progress, title, subtitle, onProgress, 
     };
 
     try {
-      console.log('[Provisioning] 📤 Enviando request para /api/installer/provision');
-      console.log('[Provisioning] 📦 Payload:', {
-        ...payload,
-        identity: { ...payload.identity, password: '***' },
-        vercel: { token: payload.vercel.token.slice(0, 10) + '...' },
-        supabase: { pat: payload.supabase.pat.slice(0, 10) + '...' },
-      });
-
       const response = await fetch('/api/installer/provision', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -73,32 +63,23 @@ export function ProvisioningView({ data, progress, title, subtitle, onProgress, 
         signal: abortControllerRef.current.signal,
       });
 
-      console.log('[Provisioning] 📥 Response recebido:', response.status, response.statusText);
-
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        console.log('[Provisioning] ❌ Response não ok:', errorData);
         throw new Error(errorData.error || `Erro ${response.status}`);
       }
 
       // Parse SSE stream
       const reader = response.body?.getReader();
       if (!reader) {
-        console.log('[Provisioning] ❌ Reader não disponível');
         throw new Error('Stream não disponível');
       }
-      console.log('[Provisioning] ✅ Reader obtido, iniciando leitura do stream');
 
       const decoder = new TextDecoder();
       let buffer = '';
-      let eventCount = 0;
-
-      console.log('[Provisioning] 🔄 Iniciando loop de leitura do stream');
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
-          console.log('[Provisioning] ✅ Stream finalizado após', eventCount, 'eventos');
           break;
         }
 
@@ -110,8 +91,6 @@ export function ProvisioningView({ data, progress, title, subtitle, onProgress, 
           if (line.startsWith('data: ')) {
             try {
               const event: ProvisionStreamEvent = JSON.parse(line.slice(6));
-              eventCount++;
-              console.log(`[Provisioning] 📨 Evento #${eventCount}:`, event.type, event);
               onProgress(event);
             } catch (parseErr) {
               console.warn('[Provisioning] ⚠️ Erro ao parsear evento SSE:', {
@@ -123,9 +102,7 @@ export function ProvisioningView({ data, progress, title, subtitle, onProgress, 
         }
       }
     } catch (err) {
-      console.log('[Provisioning] ❌ Erro no stream:', err);
       if ((err as Error).name === 'AbortError') {
-        console.log('[Provisioning] ⚠️ Request abortado');
         return;
       }
 
@@ -139,7 +116,14 @@ export function ProvisioningView({ data, progress, title, subtitle, onProgress, 
 
   useEffect(() => {
     startProvisioning();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Intentionally run only on mount - startProvisioning is stable
+    return () => {
+      if (ignoreFirstCleanupRef.current) {
+        ignoreFirstCleanupRef.current = false;
+        return;
+      }
+      abortControllerRef.current?.abort();
+    };
   }, []);
 
   return (
@@ -213,7 +197,7 @@ export function ProvisioningView({ data, progress, title, subtitle, onProgress, 
               )}
               initial={{ width: '0%' }}
               animate={{
-                width: `${progress}%`,
+                width: `${safeProgress}%`,
                 backgroundPosition: ['0% 0%', '100% 0%'],
               }}
               transition={{
@@ -224,7 +208,7 @@ export function ProvisioningView({ data, progress, title, subtitle, onProgress, 
           </div>
           <div className="flex justify-between mt-2 text-xs font-mono text-[var(--br-dust-gray)]">
             <span>INCUBAÇÃO</span>
-            <span className="text-[var(--br-neon-cyan)]">{progress}%</span>
+            <span className="text-[var(--br-neon-cyan)]">{safeProgress}%</span>
           </div>
         </div>
 

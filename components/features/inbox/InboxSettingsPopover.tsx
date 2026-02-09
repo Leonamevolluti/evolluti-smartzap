@@ -34,26 +34,27 @@ interface InboxSettings {
 
 // Timeout options in hours
 const TIMEOUT_OPTIONS = [
+  { value: '0', label: 'Nunca (recomendado)' },
   { value: '1', label: '1 hora' },
   { value: '2', label: '2 horas' },
   { value: '4', label: '4 horas' },
   { value: '8', label: '8 horas' },
   { value: '12', label: '12 horas' },
-  { value: '24', label: '24 horas (padrão)' },
-  { value: '48', label: '48 horas' },
-  { value: '72', label: '72 horas' },
-  { value: '0', label: 'Nunca expira' },
+  { value: '24', label: '1 dia' },
+  { value: '48', label: '2 dias' },
+  { value: '72', label: '3 dias' },
+  { value: '168', label: '7 dias' },
 ]
 
 export function InboxSettingsPopover() {
   const [isOpen, setIsOpen] = useState(false)
-  const [retentionDays, setRetentionDays] = useState(90)
-  const [timeoutHours, setTimeoutHours] = useState('24')
+  const [retentionDays, setRetentionDays] = useState(365)
+  const [timeoutHours, setTimeoutHours] = useState('0')
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [hasChanges, setHasChanges] = useState(false)
-  const [originalRetention, setOriginalRetention] = useState(90)
-  const [originalTimeout, setOriginalTimeout] = useState('24')
+  const [originalRetention, setOriginalRetention] = useState(365)
+  const [originalTimeout, setOriginalTimeout] = useState('0')
 
   // Load settings when popover opens
   useEffect(() => {
@@ -160,7 +161,7 @@ export function InboxSettingsPopover() {
                 </span>
               </div>
               <p className="text-[10px] text-[var(--ds-text-muted)] leading-relaxed">
-                Quando você assumir uma conversa, ela voltará automaticamente para o bot após este período.
+                Define quanto tempo a conversa fica com o atendente antes de voltar pro bot. Use &quot;Nunca&quot; para devolver manualmente.
               </p>
               <Select value={timeoutHours} onValueChange={setTimeoutHours}>
                 <SelectTrigger className="w-full h-8 text-xs">

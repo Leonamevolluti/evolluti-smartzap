@@ -156,12 +156,19 @@ export async function POST(request: NextRequest) {
 // DELETE - Clear credentials from DB
 export async function DELETE() {
   try {
+    // Remove credenciais principais
     await settingsDb.saveAll({
       phoneNumberId: '',
       businessAccountId: '',
       accessToken: '',
       isConnected: false
     })
+
+    // Remove também o Meta App ID/Secret
+    await Promise.all([
+      settingsDb.set('metaAppId', ''),
+      settingsDb.set('metaAppSecret', ''),
+    ])
 
     return NextResponse.json({
       success: true,

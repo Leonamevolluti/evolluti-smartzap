@@ -70,16 +70,7 @@ export interface TemplateButton {
     | 'PHONE_NUMBER'
     | 'COPY_CODE'
     | 'OTP'
-    | 'FLOW'
-    | 'CATALOG'
-    | 'MPM'
-    | 'VOICE_CALL'
-    | 'EXTENSION'
-    | 'ORDER_DETAILS'
-    | 'POSTBACK'
-    | 'REMINDER'
-    | 'SEND_LOCATION'
-    | 'SPM';
+    | 'FLOW';
   text: string;
   url?: string;
   phone_number?: string;
@@ -491,12 +482,16 @@ export interface RealtimeLatencyTelemetry {
 
 export type ProjectStatus = 'draft' | 'submitted' | 'completed';
 
+// Estratégia de geração de templates
+export type AIStrategy = 'marketing' | 'utility' | 'bypass';
+
 export interface TemplateProject {
   id: string;
   title: string;
   prompt: string;
   status: ProjectStatus;
   source?: 'ai' | 'manual' | string;
+  strategy?: AIStrategy;  // Estratégia usada na criação: marketing, utility, bypass
   template_count: number;
   approved_count: number;
   user_id?: string | null;
@@ -527,6 +522,7 @@ export interface CreateTemplateProjectDTO {
   title: string;
   prompt: string;
   status?: string;
+  strategy?: AIStrategy;  // Estratégia usada: marketing, utility, bypass
   items: Omit<TemplateProjectItem, 'id' | 'project_id' | 'created_at' | 'updated_at'>[];
 }
 
@@ -617,6 +613,9 @@ export interface AIAgent {
   handoff_instructions: string | null;
   // Booking tool config
   booking_tool_enabled: boolean;
+  // Tool permissions
+  allow_reactions: boolean;
+  allow_quotes: boolean;
   created_at: string;
   updated_at: string;
 }

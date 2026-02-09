@@ -3,6 +3,7 @@
 import React from 'react';
 import { PrefetchLink } from '@/components/ui/PrefetchLink';
 import { Page, PageActions, PageDescription, PageHeader, PageTitle } from '@/components/ui/page';
+import { formatDateFull } from '@/lib/date-formatter';
 import { Container } from '@/components/ui/container';
 import { StatCard } from '@/components/ui/stat-card';
 import { StatusBadge } from '@/components/ui/status-badge';
@@ -49,16 +50,24 @@ const getCampaignLabel = (status: CampaignStatus) => {
 export const DashboardView: React.FC<DashboardViewProps> = ({ stats, recentCampaigns, isLoading }) => {
   const [range, setRange] = React.useState<'7D' | '15D' | '30D'>('7D');
   const [isMounted, setIsMounted] = React.useState(false);
+  const containerRef = React.useRef<HTMLDivElement>(null);
   const rangeSize = range === '7D' ? 7 : range === '15D' ? 15 : 30;
   const chartData = stats.chartData || [];
 
   React.useEffect(() => {
     // Aguarda o browser calcular as dimensões do container antes de renderizar o chart
     // Isso evita o warning "width(-1) height(-1)" do Recharts
-    const frame = requestAnimationFrame(() => {
-      setIsMounted(true);
-    });
-    return () => cancelAnimationFrame(frame);
+    // Usa setTimeout para garantir que o layout foi calculado após o primeiro paint
+    const timer = setTimeout(() => {
+      const container = containerRef.current;
+      if (container && container.clientWidth > 0 && container.clientHeight > 0) {
+        setIsMounted(true);
+      } else {
+        // Fallback: renderiza mesmo assim após 500ms
+        setTimeout(() => setIsMounted(true), 500);
+      }
+    }, 100);
+    return () => clearTimeout(timer);
   }, []);
 
   return (
@@ -139,9 +148,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ stats, recentCampa
             aria-labelledby="chart-title"
             aria-describedby="chart-description"
           >
-            <div className="h-72 w-full">
-              {isMounted ? (
-                <ResponsiveContainer width="100%" height="100%">
+            <div ref={containerRef} className="h-72 w-full">
+              {isMounted && chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                   <AreaChart data={chartData.slice(-rangeSize)} aria-hidden="true">
                   <defs>
                     <linearGradient id="colorSent" x1="0" y1="0" x2="0" y2="1">
@@ -218,7 +227,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ stats, recentCampa
                     <tr key={campaign.id} className="hover:bg-[var(--ds-bg-hover)] transition-all duration-200 group cursor-pointer hover:shadow-[inset_0_0_20px_rgba(16,185,129,0.05)]">
                       <td className="px-6 py-5">
                         <p className="font-medium text-[var(--ds-text-primary)] group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors duration-200">{campaign.name}</p>
-                        <p className="text-[var(--ds-text-muted)] text-xs mt-1 font-mono">{new Date(campaign.createdAt).toLocaleDateString('pt-BR')}</p>
+                        <p className="text-[var(--ds-text-muted)] text-xs mt-1 font-mono">{formatDateFull(campaign.createdAt)}</p>
                       </td>
                       <td className="px-6 py-5 text-right">
                         <StatusBadge status={getCampaignBadgeStatus(campaign.status)} size="sm">

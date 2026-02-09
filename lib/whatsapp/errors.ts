@@ -50,6 +50,9 @@ export class MetaAPIError extends Error {
 
         // 3. Invalid Parameters (Structure issues)
         if (error.code === 100) {
+            if (error.error_subcode === 2388299) {
+                return "❌ Variável na borda: O texto do template não pode COMEÇAR nem TERMINAR com uma variável ({{1}}, {{2}}, etc). Adicione texto antes/depois da variável.";
+            }
             if (error.error_subcode === 2388043) {
                 return "❌ Erro de Validação: Ocorreu um problema com os Exemplos de Variáveis. Verifique se todas as variáveis {{1}} têm exemplos correspondentes.";
             }

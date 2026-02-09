@@ -319,9 +319,9 @@ describe('newButtonForType', () => {
     expect(quickReply.type).toBe('QUICK_REPLY')
     expect(quickReply.text).toBe('')
 
-    const catalog = newButtonForType('CATALOG')
-    expect(catalog.type).toBe('CATALOG')
-    expect(catalog.text).toBe('')
+    const flow = newButtonForType('FLOW')
+    expect(flow.type).toBe('FLOW')
+    expect(flow.text).toBe('')
   })
 })
 

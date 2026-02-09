@@ -12,16 +12,15 @@ export type OnboardingStep =
   | 'create-app'          // Passo 2 - criar app Meta
   | 'add-whatsapp'        // Passo 3 - adicionar WhatsApp
   | 'credentials'         // Passo 4 - copiar credenciais
-  | 'test-connection'     // Passo 5 - testar
+  | 'test-connection'     // Passo 5 - testar (usado no modo normal)
   | 'configure-webhook'   // Passo 6 - configurar webhook
-  | 'sync-templates'      // Passo 7 - sincronizar templates
-  | 'send-first-message'  // Passo 8 - enviar mensagem de teste
-  | 'create-permanent-token' // Passo 9 - token permanente (opcional)
+  | 'create-permanent-token' // Passo 7 - token permanente (opcional)
   | 'direct-credentials'  // Caminho B - input direto
   | 'complete';           // Concluído
 
 export type OnboardingPath = 'guided' | 'direct' | null;
 
+// Estado do wizard (localStorage) - apenas UI temporária
 export interface OnboardingProgress {
   // Estado do wizard
   currentStep: OnboardingStep;
@@ -32,12 +31,14 @@ export interface OnboardingProgress {
   isChecklistMinimized: boolean;
   isChecklistDismissed: boolean;
 
-  // Timestamps
+  // Timestamp de início (apenas para UX)
   startedAt: string | null;
-  completedAt: string | null;
+
+  // REMOVIDO: completedAt - agora vem apenas do banco de dados
+  // O banco de dados é a única fonte de verdade para "onboarding completo"
 }
 
-const STORAGE_KEY = 'smartzap_onboarding_progress';
+const STORAGE_KEY = 'smartzap_onboarding_progress_v2'; // v2 para ignorar localStorage antigo
 
 const DEFAULT_PROGRESS: OnboardingProgress = {
   currentStep: 'welcome',
@@ -46,7 +47,6 @@ const DEFAULT_PROGRESS: OnboardingProgress = {
   isChecklistMinimized: false,
   isChecklistDismissed: false,
   startedAt: null,
-  completedAt: null,
 };
 
 // ============================================================================
@@ -63,8 +63,11 @@ export function useOnboardingProgress() {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored) as OnboardingProgress;
-        // Migração: remove campos antigos se existirem
-        const { checklistItems, ...cleanProgress } = parsed as OnboardingProgress & { checklistItems?: unknown };
+        // Migração: remove campos antigos (completedAt, checklistItems)
+        const { completedAt, checklistItems, ...cleanProgress } = parsed as OnboardingProgress & {
+          checklistItems?: unknown;
+          completedAt?: unknown; // campo removido na v2
+        };
         setProgress(cleanProgress as OnboardingProgress);
       }
     } catch (error) {
@@ -115,6 +118,7 @@ export function useOnboardingProgress() {
 
   const nextStep = useCallback(() => {
     setProgress(prev => {
+      // Fluxo simplificado: removidos sync-templates e send-first-message
       const guidedSteps: OnboardingStep[] = [
         'requirements',
         'create-app',
@@ -122,8 +126,6 @@ export function useOnboardingProgress() {
         'credentials',
         'test-connection',
         'configure-webhook',
-        'sync-templates',
-        'send-first-message',
         'create-permanent-token',
         'complete',
       ];
@@ -143,7 +145,7 @@ export function useOnboardingProgress() {
           ...prev,
           currentStep: nextStepValue,
           completedSteps: updatedCompleted,
-          completedAt: nextStepValue === 'complete' ? new Date().toISOString() : prev.completedAt,
+          // NOTA: "completo" é marcado no BANCO, não aqui
         };
       }
 
@@ -152,13 +154,13 @@ export function useOnboardingProgress() {
         ...prev,
         currentStep: 'complete',
         completedSteps: updatedCompleted,
-        completedAt: new Date().toISOString(),
       };
     });
   }, []);
 
   const previousStep = useCallback(() => {
     setProgress(prev => {
+      // Fluxo simplificado: removidos sync-templates e send-first-message
       const guidedSteps: OnboardingStep[] = [
         'welcome',
         'requirements',
@@ -167,8 +169,6 @@ export function useOnboardingProgress() {
         'credentials',
         'test-connection',
         'configure-webhook',
-        'sync-templates',
-        'send-first-message',
         'create-permanent-token',
       ];
 
@@ -189,11 +189,12 @@ export function useOnboardingProgress() {
     });
   }, []);
 
+  // Marca o wizard local como "completo" (apenas UI)
+  // O estado real de "onboarding completo" é gerenciado pelo banco de dados
   const completeOnboarding = useCallback(() => {
     setProgress(prev => ({
       ...prev,
       currentStep: 'complete',
-      completedAt: new Date().toISOString(),
     }));
   }, []);
 
@@ -224,24 +225,29 @@ export function useOnboardingProgress() {
   // Computed Values
   // ============================================================================
 
-  const isOnboardingComplete = useMemo(() => {
-    return progress.currentStep === 'complete' || progress.completedAt !== null;
-  }, [progress.currentStep, progress.completedAt]);
+  // NOTA: Este valor indica apenas se o wizard LOCAL chegou ao step 'complete'.
+  // A fonte de verdade para "onboarding completo" é o banco de dados.
+  // Use `isOnboardingCompletedInDb` do DashboardShell para lógica de negócio.
+  const isWizardAtComplete = useMemo(() => {
+    return progress.currentStep === 'complete';
+  }, [progress.currentStep]);
 
+  // DEPRECADO: shouldShowOnboardingModal não deve mais ser usado.
+  // O DashboardShell controla a exibição do modal baseado no banco de dados.
   const shouldShowOnboardingModal = useMemo(() => {
-    // Mostra modal se não completou onboarding
-    return !isOnboardingComplete && isLoaded;
-  }, [isOnboardingComplete, isLoaded]);
+    // Sempre retorna false - a decisão agora é do DashboardShell via banco
+    return false;
+  }, []);
 
   const shouldShowChecklist = useMemo(() => {
     // Mostra checklist se:
-    // 1. Onboarding wizard foi completado
+    // 1. Wizard local chegou ao step 'complete'
     // 2. Usuário não dismissou o checklist
-    // O componente OnboardingChecklist decide internamente se esconde quando 100% completo
-    return isOnboardingComplete && !progress.isChecklistDismissed;
-  }, [isOnboardingComplete, progress.isChecklistDismissed]);
+    return isWizardAtComplete && !progress.isChecklistDismissed;
+  }, [isWizardAtComplete, progress.isChecklistDismissed]);
 
   const currentStepNumber = useMemo(() => {
+    // Fluxo simplificado: 7 passos
     const guidedSteps: OnboardingStep[] = [
       'requirements',
       'create-app',
@@ -249,15 +255,13 @@ export function useOnboardingProgress() {
       'credentials',
       'test-connection',
       'configure-webhook',
-      'sync-templates',
-      'send-first-message',
       'create-permanent-token',
     ];
     const index = guidedSteps.indexOf(progress.currentStep);
     return index >= 0 ? index + 1 : 0;
   }, [progress.currentStep]);
 
-  const totalSteps = 9;
+  const totalSteps = 7;
 
   // Progresso do checklist (usado pelo ChecklistMiniBadge)
   const checklistProgress = useMemo(() => {
@@ -273,8 +277,9 @@ export function useOnboardingProgress() {
     isLoaded,
 
     // Computed
-    isOnboardingComplete,
-    shouldShowOnboardingModal,
+    isWizardAtComplete, // novo nome - indica apenas estado do wizard local
+    isOnboardingComplete: isWizardAtComplete, // alias para compatibilidade (deprecado)
+    shouldShowOnboardingModal, // deprecado - sempre false, usar banco
     shouldShowChecklist,
     currentStepNumber,
     totalSteps,

@@ -66,6 +66,8 @@ export function useServiceWorker(): UseServiceWorkerReturn {
   // ==========================================================================
 
   useEffect(() => {
+    const isDev = process.env.NODE_ENV !== 'production'
+
     // Verificar suporte
     const swSupported = 'serviceWorker' in navigator
     const pushSupported = 'PushManager' in window
@@ -95,8 +97,20 @@ export function useServiceWorker(): UseServiceWorkerReturn {
 
     window.addEventListener('appinstalled', handleAppInstalled)
 
-    // Registrar SW automaticamente se suportado
-    if (swSupported) {
+    // Em dev, evita SW para não servir HTML/cache antigo
+    if (isDev) {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations()
+          .then((registrations) => Promise.all(registrations.map((reg) => reg.unregister())))
+          .catch((error) => console.warn('[SW] Falha ao desregistrar em dev:', error))
+      }
+      if ('caches' in window) {
+        caches.keys()
+          .then((names) => Promise.all(names.map((name) => caches.delete(name))))
+          .catch((error) => console.warn('[SW] Falha ao limpar cache em dev:', error))
+      }
+    } else if (swSupported) {
+      // Registrar SW automaticamente se suportado
       registerServiceWorker()
     }
 

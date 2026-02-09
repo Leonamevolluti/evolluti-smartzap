@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 /** Button type for template preview */
 export type ModelPreviewButton = {
   /** Type of WhatsApp template button */
+  /** Tipos de botão suportados pela Meta API para templates */
   type:
     | 'QUICK_REPLY'
     | 'URL'
@@ -14,15 +15,6 @@ export type ModelPreviewButton = {
     | 'COPY_CODE'
     | 'OTP'
     | 'FLOW'
-    | 'CATALOG'
-    | 'MPM'
-    | 'VOICE_CALL'
-    | 'EXTENSION'
-    | 'ORDER_DETAILS'
-    | 'POSTBACK'
-    | 'REMINDER'
-    | 'SEND_LOCATION'
-    | 'SPM'
   /** Button display text */
   text: string
 }

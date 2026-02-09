@@ -2,12 +2,9 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Zap } from 'lucide-react';
+import { Zap, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import {
-  TurboStatusCard,
-  TurboPhoneCard,
-  TurboActionsCard,
   TurboPlannerSection,
   TurboConfigForm,
   type TurboDraft,
@@ -65,10 +62,11 @@ export function TurboConfigSection({
 
   const [isEditing, setIsEditing] = useState(false);
   const [turboDraft, setTurboDraft] = useState<TurboDraft>(() => ({
-    enabled: turboConfig?.enabled ?? false,
-    sendConcurrency: (turboConfig as any)?.sendConcurrency ?? 1,
-    batchSize: (turboConfig as any)?.batchSize ?? 10,
-    startMps: turboConfig?.startMps ?? 30,
+    // Defaults: Balanced profile
+    enabled: turboConfig?.enabled ?? true,
+    sendConcurrency: (turboConfig as any)?.sendConcurrency ?? 2,
+    batchSize: (turboConfig as any)?.batchSize ?? 40,
+    startMps: turboConfig?.startMps ?? 20,
     maxMps: turboConfig?.maxMps ?? 80,
     minMps: turboConfig?.minMps ?? 5,
     cooldownSec: turboConfig?.cooldownSec ?? 30,
@@ -81,8 +79,8 @@ export function TurboConfigSection({
     if (!turboConfig) return;
     setTurboDraft({
       enabled: turboConfig.enabled,
-      sendConcurrency: (turboConfig as any)?.sendConcurrency ?? 1,
-      batchSize: (turboConfig as any)?.batchSize ?? 10,
+      sendConcurrency: (turboConfig as any)?.sendConcurrency ?? 2,
+      batchSize: (turboConfig as any)?.batchSize ?? 40,
       startMps: turboConfig.startMps,
       maxMps: turboConfig.maxMps,
       minMps: turboConfig.minMps,
@@ -139,8 +137,8 @@ export function TurboConfigSection({
     if (turboConfig) {
       setTurboDraft({
         enabled: turboConfig.enabled,
-        sendConcurrency: (turboConfig as any)?.sendConcurrency ?? 1,
-        batchSize: (turboConfig as any)?.batchSize ?? 10,
+        sendConcurrency: (turboConfig as any)?.sendConcurrency ?? 2,
+        batchSize: (turboConfig as any)?.batchSize ?? 40,
         startMps: turboConfig.startMps,
         maxMps: turboConfig.maxMps,
         minMps: turboConfig.minMps,
@@ -178,44 +176,77 @@ export function TurboConfigSection({
         <div className="flex items-center gap-2 shrink-0">
           <Link
             href="/settings/performance"
-            className="h-10 px-4 rounded-xl bg-[var(--ds-bg-hover)] text-[var(--ds-text-primary)] hover:bg-[var(--ds-bg-surface)] border border-[var(--ds-border-default)] hover:border-[var(--ds-border-strong)] transition-all text-sm font-medium"
-            title="Abrir central de performance (baseline/historico)"
+            className="inline-flex items-center justify-center h-9 px-4 rounded-lg bg-[var(--ds-bg-surface)] text-[var(--ds-text-primary)] hover:bg-[var(--ds-bg-hover)] border border-[var(--ds-border-default)] transition-colors text-sm font-medium"
+            title="Abrir central de performance"
           >
             Performance
           </Link>
           <Link
             href="/settings/meta-diagnostics"
-            className="h-10 px-4 rounded-xl bg-[var(--ds-bg-hover)] text-[var(--ds-text-primary)] hover:bg-[var(--ds-bg-surface)] border border-[var(--ds-border-default)] hover:border-[var(--ds-border-strong)] transition-all text-sm font-medium"
-            title="Abrir central de diagnostico Meta (Graph API + infra + acoes)"
+            className="inline-flex items-center justify-center h-9 px-4 rounded-lg bg-[var(--ds-bg-surface)] text-[var(--ds-text-primary)] hover:bg-[var(--ds-bg-hover)] border border-[var(--ds-border-default)] transition-colors text-sm font-medium"
+            title="Abrir diagnóstico Meta"
           >
-            Diagnostico
+            Diagnóstico
           </Link>
           <button
             onClick={() => setIsEditing((v) => !v)}
-            className="h-10 px-4 rounded-xl bg-[var(--ds-bg-hover)] text-[var(--ds-text-primary)] hover:bg-[var(--ds-bg-surface)] border border-[var(--ds-border-default)] hover:border-[var(--ds-border-strong)] transition-all text-sm font-medium"
+            className="inline-flex items-center justify-center h-9 px-4 rounded-lg bg-[var(--ds-bg-surface)] text-[var(--ds-text-primary)] hover:bg-[var(--ds-bg-hover)] border border-[var(--ds-border-default)] transition-colors text-sm font-medium"
           >
             {isEditing ? 'Fechar' : 'Configurar'}
           </button>
         </div>
       </div>
 
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-        <TurboStatusCard
-          loading={whatsappThrottleLoading}
-          config={turboConfig}
-          state={turboState}
-          source={whatsappThrottle?.source}
-        />
+      {/* Status bar - layout horizontal compacto */}
+      <div className="mt-6 flex flex-wrap items-center gap-6 p-4 bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] rounded-xl">
+        {/* Status */}
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-[var(--ds-text-muted)] uppercase tracking-wide">Status</div>
+          {whatsappThrottleLoading ? (
+            <span className="text-sm text-[var(--ds-text-secondary)]">...</span>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className={`text-sm font-medium ${turboConfig?.enabled ? 'text-emerald-400' : 'text-[var(--ds-text-secondary)]'}`}>
+                {turboConfig?.enabled ? 'Ativo' : 'Inativo'}
+              </span>
+              <span className="text-xs text-[var(--ds-text-muted)]">({whatsappThrottle?.source || '-'})</span>
+            </div>
+          )}
+        </div>
 
-        <TurboPhoneCard
-          phoneNumberId={whatsappThrottle?.phoneNumberId}
-          settingsPhoneNumberId={settings.phoneNumberId}
-        />
+        <div className="h-6 w-px bg-[var(--ds-border-default)]" />
 
-        <TurboActionsCard
-          onReset={handleReset}
-          isSaving={isSaving}
-        />
+        {/* Target MPS */}
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-[var(--ds-text-muted)] uppercase tracking-wide">Target</div>
+          <span className="text-sm font-mono font-medium text-[var(--ds-text-primary)]">
+            {typeof turboState?.targetMps === 'number' ? `${turboState.targetMps} mps` : '-'}
+          </span>
+        </div>
+
+        <div className="h-6 w-px bg-[var(--ds-border-default)]" />
+
+        {/* Phone ID */}
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-[var(--ds-text-muted)] uppercase tracking-wide">Phone ID</div>
+          <span className="text-sm font-mono text-[var(--ds-text-primary)]">
+            {whatsappThrottle?.phoneNumberId || settings.phoneNumberId || '-'}
+          </span>
+        </div>
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Reset button */}
+        <button
+          onClick={handleReset}
+          disabled={!!isSaving}
+          className="inline-flex items-center gap-2 h-8 px-3 rounded-lg bg-[var(--ds-bg-surface)] hover:bg-[var(--ds-bg-hover)] border border-[var(--ds-border-default)] transition-colors text-xs font-medium text-[var(--ds-text-secondary)] hover:text-[var(--ds-text-primary)] disabled:opacity-50"
+          title="Reseta o targetMps para startMps"
+        >
+          {isSaving ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+          Resetar
+        </button>
       </div>
 
       <TurboPlannerSection

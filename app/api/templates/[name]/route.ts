@@ -123,10 +123,16 @@ export async function DELETE(
       console.error('Meta Delete Error:', result)
       
       let errorMessage = result?.error?.message || 'Erro ao deletar template'
-      
+
       // Traduzir erros comuns
       if (result?.error?.code === 100) {
-        errorMessage = 'Template não encontrado ou já foi deletado.'
+        // Erro 100 pode ter diferentes causas - verificar a mensagem
+        const msg = String(result?.error?.message || '').toLowerCase()
+        if (msg.includes('permission') || msg.includes('business')) {
+          errorMessage = 'Sem permissão para deletar. O token precisa da permissão whatsapp_business_management com acesso admin ao WABA.'
+        } else {
+          errorMessage = 'Template não encontrado ou já foi deletado.'
+        }
       } else if (result?.error?.code === 190) {
         errorMessage = 'Token de acesso inválido ou expirado.'
       }

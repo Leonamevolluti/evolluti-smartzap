@@ -12,6 +12,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { settingsDb } from '@/lib/supabase-db'
 import { isSupabaseConfigured } from '@/lib/supabase'
 
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 const SETTINGS_KEYS = {
   enabled: 'mem0_enabled',
   apiKey: 'mem0_api_key',
@@ -27,7 +31,7 @@ export async function GET() {
       return NextResponse.json({
         ok: false,
         error: 'Supabase não configurado',
-      }, { status: 400 })
+      }, { status: 400, headers: { 'Cache-Control': 'no-store' } })
     }
 
     const [enabledRaw, apiKey] = await Promise.all([
@@ -46,13 +50,13 @@ export async function GET() {
         // Não retorna a key completa por segurança, só os últimos 4 caracteres
         apiKeyPreview: hasApiKey && apiKey ? `m0-••••${apiKey.slice(-4)}` : null,
       },
-    })
+    }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     console.error('[mem0 settings] GET error:', error)
     return NextResponse.json({
       ok: false,
       error: 'Falha ao buscar configurações',
-    }, { status: 500 })
+    }, { status: 500, headers: { 'Cache-Control': 'no-store' } })
   }
 }
 

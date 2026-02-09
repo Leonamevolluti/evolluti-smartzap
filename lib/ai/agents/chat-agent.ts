@@ -106,10 +106,17 @@ export function cancelDebounce(conversationId: string): void {
 // Types
 // =============================================================================
 
+export interface ContactContext {
+  name?: string
+  email?: string
+  created_at?: string
+}
+
 export interface SupportAgentConfig {
   agent: AIAgent
   conversation: InboxConversation
   messages: InboxMessage[]
+  contactData?: ContactContext
 }
 
 export interface SupportAgentResult {
@@ -144,6 +151,10 @@ const baseResponseSchema = z.object({
     )
     .optional()
     .describe('Fontes utilizadas para gerar a resposta'),
+  shouldQuoteUserMessage: z
+    .boolean()
+    .optional()
+    .describe('Se a resposta deve citar a mensagem do usuário (aparecer como reply)'),
 })
 
 // Campos de handoff (adicionados quando habilitado)
@@ -186,6 +197,7 @@ const DEFAULT_MODEL_ID = 'gemini-3-flash-preview'
 const DEFAULT_TEMPERATURE = 0.7
 const DEFAULT_MAX_TOKENS = 2048
 const AI_TIMEOUT_MS = 90_000 // 90 segundos - timeout para chamadas de IA (considera RAG + tools)
+const MAX_TOOL_RETRIES = 2 // Tentativas extras quando LLM não chama respond tool
 
 /**
  * Converte formatação Markdown para WhatsApp.
@@ -326,6 +338,8 @@ export async function processChatAgent(
     if (memoryContext.memoryCount > 0) {
       console.log(`[chat-agent] Found ${memoryContext.memoryCount} memories`)
     }
+  } else {
+    console.log(`[chat-agent] Mem0 disabled (configure mem0_enabled e mem0_api_key nas settings)`)
   }
 
   // Get model configuration - supports Google, OpenAI, Anthropic
@@ -334,10 +348,14 @@ export async function processChatAgent(
 
   let baseModel
   let apiKey: string
+  let usingGateway = false
+  let allApiKeys: Partial<Record<'google' | 'openai' | 'anthropic', string>> | undefined
   try {
     const result = await createLanguageModel(modelId)
     baseModel = result.model
     apiKey = result.apiKey
+    usingGateway = result.usingGateway
+    allApiKeys = result.allApiKeys
   } catch (err) {
     return {
       success: false,
@@ -370,8 +388,21 @@ export async function processChatAgent(
     // Schema é dinâmico baseado em handoff_enabled
     const handoffEnabled = agent.handoff_enabled ?? true // default true para compatibilidade
 
-    // Build system prompt: base + handoff instructions (if enabled) + memory context
+    // Build system prompt: base + contact context + handoff instructions + memory context
     let systemPrompt = agent.system_prompt
+
+    // Adiciona contexto do contato (nome, email)
+    const { contactData } = config
+    if (contactData && (contactData.name || contactData.email)) {
+      const contactLines: string[] = []
+      if (contactData.name) contactLines.push(`- Nome: ${contactData.name}`)
+      if (contactData.email) contactLines.push(`- Email: ${contactData.email}`)
+      if (contactData.created_at) {
+        const date = new Date(contactData.created_at).toLocaleDateString('pt-BR')
+        contactLines.push(`- Cliente desde: ${date}`)
+      }
+      systemPrompt += `\n\n## Contexto do Contato\n${contactLines.join('\n')}`
+    }
 
     // Adiciona instruções de handoff se habilitado e configurado
     if (handoffEnabled && agent.handoff_instructions) {
@@ -386,8 +417,9 @@ export async function processChatAgent(
 
     console.log(`[chat-agent] Handoff enabled: ${handoffEnabled}`)
 
-    // Flag para indicar que já respondeu (para stopWhen)
+    // Flags de estado
     let hasResponded = false
+    let shouldQuoteUserMessage = false // Setado pelo tool quoteMessage
 
     const respondTool = tool({
       description: 'Envia uma resposta estruturada ao usuário. Use APENAS quando tiver a resposta final. NÃO use para respostas parciais.',
@@ -401,6 +433,7 @@ export async function processChatAgent(
           message: formattedMessage,
           shouldHandoff: handoffParams.shouldHandoff ?? false,
           sources: sources || params.sources,
+          shouldQuoteUserMessage, // Inclui a flag setada pelo tool quoteMessage
         }
         hasResponded = true // Marca que já respondeu
         return { success: true, message: formattedMessage }
@@ -509,6 +542,66 @@ export async function processChatAgent(
       }
     }
 
+    // Reaction tool - allows the agent to react to user messages with emojis
+    // Only available if: 1) we have the user's message ID, 2) agent allows reactions
+    const allowReactions = agent.allow_reactions !== false // default true
+    const allowQuotes = agent.allow_quotes !== false // default true
+
+    if (lastUserMessage?.whatsapp_message_id && allowReactions) {
+      const { sendReaction } = await import('@/lib/whatsapp-send')
+
+      const reactToMessageTool = tool({
+        description: 'Reage à mensagem do usuário com um emoji. A reação aparece grudada na mensagem dele como feedback visual instantâneo.',
+        inputSchema: z.object({
+          emoji: z.string().describe('O emoji para reagir à mensagem do usuário'),
+        }),
+        execute: async ({ emoji }) => {
+          console.log(`[chat-agent] 😀 LLM requested reaction: ${emoji} on message ${lastUserMessage.whatsapp_message_id}`)
+
+          const result = await sendReaction({
+            to: conversation.phone,
+            messageId: lastUserMessage.whatsapp_message_id!,
+            emoji,
+          })
+
+          if (result.success) {
+            console.log(`[chat-agent] 😀 Reaction sent successfully`)
+            return { reacted: true, emoji }
+          }
+
+          console.log(`[chat-agent] 😀 Reaction failed: ${result.error}`)
+          return { reacted: false, error: result.error }
+        },
+      })
+
+      tools.reactToMessage = reactToMessageTool
+      console.log(`[chat-agent] 😀 Reaction tool added to tools list`)
+    } else if (!allowReactions) {
+      console.log(`[chat-agent] 😀 Reaction tool disabled by agent settings`)
+    } else {
+      console.log(`[chat-agent] ⚠️ Reaction tool not available: no whatsapp_message_id on last user message`)
+    }
+
+    // Quote Message tool - allows the agent to quote/reply to the user's message
+    if (lastUserMessage?.whatsapp_message_id && allowQuotes) {
+      const quoteMessageTool = tool({
+        description: 'Faz a resposta aparecer como citação da mensagem do usuário (reply). Use para destacar que está respondendo diretamente a algo específico que o usuário disse.',
+        inputSchema: z.object({
+          reason: z.string().optional().describe('Motivo opcional para citar a mensagem'),
+        }),
+        execute: async ({ reason }) => {
+          console.log(`[chat-agent] 💬 LLM requested to quote user message${reason ? `: ${reason}` : ''}`)
+          shouldQuoteUserMessage = true
+          return { willQuote: true, reason }
+        },
+      })
+
+      tools.quoteMessage = quoteMessageTool
+      console.log(`[chat-agent] 💬 Quote tool added to tools list`)
+    } else if (!allowQuotes) {
+      console.log(`[chat-agent] 💬 Quote tool disabled by agent settings`)
+    }
+
     // Determina se precisa de multi-step (mais de uma tool além de respond)
     const hasMultipleTools = Object.keys(tools).length > 1
     console.log(`[chat-agent] Generating response with tools: ${Object.keys(tools).join(', ')}, multiStep: ${hasMultipleTools}`)
@@ -526,56 +619,163 @@ export async function processChatAgent(
     console.log(`[chat-agent] 🚀 Calling generateText...`)
     const startGenerate = Date.now()
 
-    // Timeout AbortController - previne que chamadas de IA fiquem penduradas
-    const abortController = new AbortController()
-    const timeoutId = setTimeout(() => {
-      console.error(`[chat-agent] ⏱️ AI call timed out after ${AI_TIMEOUT_MS}ms`)
-      abortController.abort()
-    }, AI_TIMEOUT_MS)
+    // Build providerOptions for AI Gateway (BYOK-only, no system credential fallback)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let providerOptions: Record<string, any> | undefined
+    if (usingGateway && allApiKeys) {
+      // Build BYOK config - only include providers that have keys configured
+      const byokConfig: Record<string, Array<{ apiKey: string }>> = {}
+      const availableProviders: string[] = []
 
-    try {
-      const result = await generateText({
-        model,
-        system: systemPrompt,
-        messages: aiMessages,
-        tools,
-        toolChoice: 'required', // FORÇA o LLM a chamar uma tool (respond)
-        // Para quando respond for chamado OU após 3 steps (o que vier primeiro)
-        stopWhen: (event) => stopCondition() || stepCountIs(3)(event),
-        temperature: agent.temperature ?? DEFAULT_TEMPERATURE,
-        maxOutputTokens: agent.max_tokens ?? DEFAULT_MAX_TOKENS,
-        abortSignal: abortController.signal,
-      })
-
-      clearTimeout(timeoutId) // Limpa timeout se completou
-
-      console.log(`[chat-agent] ✅ generateText completed in ${Date.now() - startGenerate}ms`)
-      console.log(`[chat-agent] Steps executed: ${result.steps?.length || 0}`)
-      console.log(`[chat-agent] Tool calls: ${JSON.stringify(result.steps?.map(s => s.toolCalls?.map(tc => tc.toolName)).flat().filter(Boolean) || [])}`)
-      console.log(`[chat-agent] Finish reason: ${result.finishReason}`)
-
-      // Log each step for debugging
-      result.steps?.forEach((step, i) => {
-        console.log(`[chat-agent] Step ${i + 1}: toolCalls=${step.toolCalls?.map(tc => tc.toolName).join(', ') || 'none'}, text=${step.text?.slice(0, 50) || 'none'}...`)
-      })
-
-    } catch (genError) {
-      clearTimeout(timeoutId) // Limpa timeout em caso de erro
-      const elapsed = Date.now() - startGenerate
-
-      // Detecta se foi timeout
-      if (abortController.signal.aborted) {
-        console.error(`[chat-agent] ❌ generateText ABORTED (timeout) after ${elapsed}ms`)
-        throw new Error(`AI call timed out after ${AI_TIMEOUT_MS / 1000}s`)
+      for (const [prov, key] of Object.entries(allApiKeys)) {
+        if (key) {
+          byokConfig[prov] = [{ apiKey: key }]
+          availableProviders.push(prov)
+        }
       }
 
-      console.error(`[chat-agent] ❌ generateText failed after ${elapsed}ms:`, genError)
-      throw genError
+      if (availableProviders.length > 0) {
+        providerOptions = {
+          gateway: {
+            // 'only' restricts to BYOK providers - NO system credential fallback
+            only: availableProviders,
+            // 'order' defines fallback sequence: Google → OpenAI → Anthropic
+            order: ['google', 'openai', 'anthropic'].filter(p => availableProviders.includes(p)),
+            // 'byok' passes all configured API keys
+            byok: byokConfig,
+          },
+        }
+        console.log(`[chat-agent] 🔑 AI Gateway BYOK enabled for: ${availableProviders.join(', ')}`)
+        console.log(`[chat-agent] 🔄 Fallback order: ${providerOptions.gateway.order.join(' → ')}`)
+      }
     }
 
+    // =======================================================================
+    // RETRY LOOP: Tenta novamente se LLM não chamar respond tool
+    // Issue #8992: toolChoice: 'required' não é garantia, LLM pode retornar texto puro
+    // Solução: retry com prompt reforçado até MAX_TOOL_RETRIES tentativas
+    // =======================================================================
+    let retryCount = 0
+    let lastLLMText = '' // Guarda texto que o LLM gerou sem chamar tool
+
+    while (!hasResponded && retryCount <= MAX_TOOL_RETRIES) {
+      // Timeout AbortController - previne que chamadas de IA fiquem penduradas
+      const abortController = new AbortController()
+      const timeoutId = setTimeout(() => {
+        console.error(`[chat-agent] ⏱️ AI call timed out after ${AI_TIMEOUT_MS}ms`)
+        abortController.abort()
+      }, AI_TIMEOUT_MS)
+
+      // Se é retry, adiciona instrução reforçada ao system prompt
+      let currentSystemPrompt = systemPrompt
+      if (retryCount > 0) {
+        console.log(`[chat-agent] 🔄 Retry ${retryCount}/${MAX_TOOL_RETRIES} - LLM não chamou respond tool`)
+        currentSystemPrompt += `\n\n## INSTRUÇÃO CRÍTICA\nVocê DEVE chamar a tool "respond" para enviar sua resposta. NÃO responda com texto direto. Use a tool respond com message, sentiment e confidence.`
+
+        // Adiciona o texto anterior como contexto se houver
+        if (lastLLMText) {
+          aiMessages.push({
+            role: 'assistant',
+            content: lastLLMText,
+          })
+          aiMessages.push({
+            role: 'user',
+            content: '[SISTEMA] Você precisa usar a tool "respond" para enviar sua resposta. Reformule sua resposta anterior usando a tool.',
+          })
+        }
+      }
+
+      try {
+        const result = await generateText({
+          model,
+          system: currentSystemPrompt,
+          messages: aiMessages,
+          tools,
+          toolChoice: 'required', // FORÇA o LLM a chamar uma tool (respond)
+          // Para quando respond for chamado OU após 3 steps (o que vier primeiro)
+          stopWhen: (event) => stopCondition() || stepCountIs(3)(event),
+          temperature: agent.temperature ?? DEFAULT_TEMPERATURE,
+          maxOutputTokens: agent.max_tokens ?? DEFAULT_MAX_TOKENS,
+          abortSignal: abortController.signal,
+          // Pass providerOptions only when using AI Gateway
+          ...(providerOptions && { providerOptions }),
+        })
+
+        clearTimeout(timeoutId) // Limpa timeout se completou
+
+        const attemptLabel = retryCount === 0 ? '' : ` (retry ${retryCount})`
+        console.log(`[chat-agent] ✅ generateText completed${attemptLabel} in ${Date.now() - startGenerate}ms`)
+        console.log(`[chat-agent] Steps executed: ${result.steps?.length || 0}`)
+        console.log(`[chat-agent] Tool calls: ${JSON.stringify(result.steps?.map(s => s.toolCalls?.map(tc => tc.toolName)).flat().filter(Boolean) || [])}`)
+        console.log(`[chat-agent] Finish reason: ${result.finishReason}`)
+
+        // 🔍 DIAGNÓSTICO: Log completo quando finishReason é error
+        if (result.finishReason === 'error') {
+          console.error(`[chat-agent] 🔴 PROVIDER ERROR DETAILS:`)
+          console.error(`[chat-agent] - finishReason: ${result.finishReason}`)
+          console.error(`[chat-agent] - text: ${result.text?.slice(0, 200) || 'none'}`)
+          console.error(`[chat-agent] - response headers: ${JSON.stringify(result.response?.headers || {})}`)
+          console.error(`[chat-agent] - warnings: ${JSON.stringify(result.warnings || [])}`)
+          console.error(`[chat-agent] - usage: ${JSON.stringify(result.usage || {})}`)
+          // Log raw response se existir
+          if (result.response?.body) {
+            console.error(`[chat-agent] - raw body available: true`)
+          }
+          // Log cada step em detalhe
+          result.steps?.forEach((step, i) => {
+            console.error(`[chat-agent] - Step ${i + 1} details:`, JSON.stringify({
+              finishReason: step.finishReason,
+              text: step.text?.slice(0, 100),
+              toolCalls: step.toolCalls?.length || 0,
+              warnings: step.warnings,
+            }))
+          })
+        }
+
+        // Log each step for debugging
+        result.steps?.forEach((step, i) => {
+          console.log(`[chat-agent] Step ${i + 1}: toolCalls=${step.toolCalls?.map(tc => tc.toolName).join(', ') || 'none'}, text=${step.text?.slice(0, 50) || 'none'}...`)
+        })
+
+        // Se LLM retornou texto mas não chamou respond, guarda para retry
+        if (!hasResponded && result.text) {
+          lastLLMText = result.text
+          console.log(`[chat-agent] ⚠️ LLM retornou texto sem chamar respond: "${result.text.slice(0, 100)}..."`)
+        }
+
+      } catch (genError) {
+        clearTimeout(timeoutId) // Limpa timeout em caso de erro
+        const elapsed = Date.now() - startGenerate
+
+        // Detecta se foi timeout
+        if (abortController.signal.aborted) {
+          console.error(`[chat-agent] ❌ generateText ABORTED (timeout) after ${elapsed}ms`)
+          throw new Error(`AI call timed out after ${AI_TIMEOUT_MS / 1000}s`)
+        }
+
+        console.error(`[chat-agent] ❌ generateText failed after ${elapsed}ms:`, genError)
+        throw genError
+      }
+
+      retryCount++
+    }
+
+    // Se ainda não respondeu após todos os retries, usa o texto como fallback
     if (!response) {
-      console.error(`[chat-agent] ⚠️ No response object - respond tool was not called`)
-      throw new Error('No response generated - LLM did not call respond tool')
+      if (lastLLMText) {
+        // Fallback: usa o texto que o LLM gerou como resposta
+        console.log(`[chat-agent] ⚠️ Fallback: usando texto direto do LLM como resposta`)
+        response = {
+          message: convertMarkdownToWhatsApp(lastLLMText),
+          sentiment: 'neutral',
+          confidence: 0.3, // Baixa confiança pois não seguiu o formato
+          shouldHandoff: false,
+          sources: sources,
+        }
+      } else {
+        console.error(`[chat-agent] ⚠️ No response object after ${retryCount} attempts - respond tool was not called`)
+        throw new Error('No response generated - LLM did not call respond tool after retries')
+      }
     }
 
     console.log(`[chat-agent] Response generated: "${response.message.slice(0, 100)}..."`)

@@ -113,6 +113,13 @@ export default function SettingsPage() {
             workflowExecutionLoading={controller.workflowExecutionLoading}
             saveWorkflowExecution={controller.saveWorkflowExecution}
             isSavingWorkflowExecution={controller.isSavingWorkflowExecution}
+
+            // Upstash Config (métricas QStash)
+            upstashConfig={controller.upstashConfig}
+            upstashConfigLoading={controller.upstashConfigLoading}
+            saveUpstashConfig={controller.saveUpstashConfig}
+            removeUpstashConfig={controller.removeUpstashConfig}
+            isSavingUpstashConfig={controller.isSavingUpstashConfig}
             hideHeader
           />
         </div>

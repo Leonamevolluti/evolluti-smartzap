@@ -40,7 +40,12 @@ export class TemplateService {
             const result = await response.json()
 
             if (!response.ok) {
-                console.error('[TemplateService] Meta API Error:', JSON.stringify(result, null, 2))
+                console.error('[TemplateService] ====== META API ERROR ======')
+                console.error('[TemplateService] Template name:', data.name)
+                console.error('[TemplateService] Status:', response.status)
+                console.error('[TemplateService] Full error:', JSON.stringify(result, null, 2))
+                console.error('[TemplateService] Payload sent:', JSON.stringify(metaPayload, null, 2))
+                console.error('[TemplateService] ============================')
                 // Throw typed Error
                 throw new MetaAPIError(result.error)
             }
@@ -186,6 +191,12 @@ export class TemplateService {
                 if (input.header.example?.header_handle && input.header.example.header_handle.length > 0) {
                     headerComponent.example = { header_handle: input.header.example.header_handle }
                 }
+            } else if (input.header.format === 'LOCATION') {
+                // LOCATION headers na criação do template NÃO incluem dados de localização.
+                // Os dados (latitude, longitude, etc.) são passados apenas no momento do ENVIO da mensagem.
+                // A Meta exige apenas { type: "HEADER", format: "LOCATION" } na criação.
+                // Os dados de localização são salvos localmente na coluna header_location
+                // e usados no buildMetaTemplatePayload (template-contract.ts) ao enviar.
             }
             components.push(headerComponent)
         }
@@ -416,37 +427,8 @@ export class TemplateService {
             }
         }
 
-        if (btn.type === 'CATALOG') {
-            return {
-                type: 'CATALOG',
-                text: btn.text
-            }
-        }
-
-        if (btn.type === 'MPM') {
-            return {
-                type: 'MPM',
-                text: btn.text
-            }
-        }
-
-        if (btn.type === 'VOICE_CALL') {
-            return {
-                type: 'VOICE_CALL',
-                text: btn.text
-            }
-        }
-
-        if (['EXTENSION', 'ORDER_DETAILS', 'POSTBACK', 'REMINDER', 'SEND_LOCATION', 'SPM'].includes(btn.type)) {
-            return {
-                type: btn.type,
-                ...(btn.text ? { text: btn.text } : {}),
-                ...(btn.action ? { action: btn.action } : {}),
-                ...(btn.payload ? { payload: btn.payload } : {}),
-            } as MetaButton
-        }
-
-        throw new Error(`Tipo de botão não suportado: ${String(btn.type)}`)
+        // Qualquer outro tipo não é suportado pela Meta API para templates
+        throw new Error(`Tipo de botão "${btn.type}" não é suportado pela Meta para templates. Use: Resposta Rápida, URL, Ligar, Copiar Código, OTP ou MiniApp (Flow).`)
     }
 
     private buildCarouselCards(cards: any[], parameterFormat: 'positional' | 'named') {

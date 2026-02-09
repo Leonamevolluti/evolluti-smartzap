@@ -11,11 +11,15 @@ export function TurboPhoneCard({
   phoneNumberId,
   settingsPhoneNumberId,
 }: TurboPhoneCardProps) {
+  const id = phoneNumberId || settingsPhoneNumberId;
+
   return (
-    <div className="bg-zinc-900/40 border border-white/10 rounded-xl p-4">
-      <div className="text-xs text-gray-500">Phone Number ID</div>
-      <div className="mt-2 text-sm text-white font-mono break-all">
-        {phoneNumberId || settingsPhoneNumberId || '-'}
+    <div className="bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] rounded-xl p-4 flex flex-col">
+      <div className="text-xs text-[var(--ds-text-muted)] mb-2">Identificação do número de telefone</div>
+      <div className="flex-1 flex items-center">
+        <span className="text-lg font-mono font-medium text-[var(--ds-text-primary)] break-all">
+          {id || '-'}
+        </span>
       </div>
     </div>
   );

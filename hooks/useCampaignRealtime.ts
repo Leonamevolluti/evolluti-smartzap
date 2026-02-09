@@ -27,6 +27,7 @@ import type { RealtimeLatencyTelemetry } from '@/types'
 
 // Constants
 const POST_COMPLETION_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
+const isDev = process.env.NODE_ENV === 'development'
 
 interface UseCampaignRealtimeOptions {
   campaignId: string | undefined
@@ -106,7 +107,6 @@ export function useCampaignRealtime({
     // LARGE CAMPAIGNS: No Realtime socket (uses polling only)
     // This saves Supabase Free tier events (2M/month limit)
     if (isLargeCampaign) {
-      console.log('[CampaignRealtime] Large campaign detected, using polling only')
       return false
     }
 
@@ -141,8 +141,6 @@ export function useCampaignRealtime({
     debounceTimerRef.current = setTimeout(() => {
       if (!mountedRef.current || !pendingRefetchRef.current) return
 
-      console.log(`[CampaignRealtime] Debounced refetch (${debounceTime}ms window)`)
-
       const startedAt = Date.now()
       if (telemetryEnabled) {
         setTelemetry((prev) => ({
@@ -176,7 +174,6 @@ export function useCampaignRealtime({
   // Handle campaign updates
   const handleCampaignUpdate = useCallback((payload: RealtimePayload) => {
     if (!mountedRef.current) return
-    console.log('[CampaignRealtime] Campaign update received')
 
     if (telemetryEnabled) {
       const receivedAt = Date.now()
@@ -201,7 +198,6 @@ export function useCampaignRealtime({
   // Handle campaign_contacts updates
   const handleContactUpdate = useCallback((payload: RealtimePayload) => {
     if (!mountedRef.current) return
-    console.log('[CampaignRealtime] Contact update received')
 
     if (telemetryEnabled) {
       const receivedAt = Date.now()
@@ -286,15 +282,11 @@ export function useCampaignRealtime({
 
     if (remaining <= 0) {
       // Already past the window
-      console.log('[CampaignRealtime] Post-completion window already expired')
       setHasTimedOut(true)
       return
     }
 
-    console.log(`[CampaignRealtime] Will disconnect in ${Math.round(remaining / 1000)}s`)
-
     const timer = setTimeout(() => {
-      console.log('[CampaignRealtime] Post-completion window expired, disconnecting')
       setHasTimedOut(true)
     }, remaining)
 
@@ -306,7 +298,6 @@ export function useCampaignRealtime({
     // Disconnect if shouldn't connect
     if (!shouldConnect) {
       if (channelRef.current) {
-        console.log('[CampaignRealtime] Disconnecting...')
         removeChannel(channelRef.current)
         channelRef.current = null
         setIsActuallyConnected(false)
@@ -435,14 +426,13 @@ export function useCampaignRealtime({
       debouncedRefetch()
     })
 
-    // Activate channel
-    activateChannel(channel)
+    // Activate channel with silent mode to centralize error handling
+    activateChannel(channel, undefined, { silent: true })
       .then(() => {
-        console.log(`[CampaignRealtime] Connected (debounce: ${debounceTime}ms)`)
         setIsActuallyConnected(true)
       })
-      .catch((err) => {
-        console.error('[CampaignRealtime] Failed to connect:', err)
+      .catch(() => {
+        // Errors are logged centrally in supabase-realtime.ts
         setIsActuallyConnected(false)
       })
 
@@ -452,7 +442,6 @@ export function useCampaignRealtime({
         clearTimeout(debounceTimerRef.current)
       }
       if (channelRef.current) {
-        console.log(`[CampaignRealtime] Cleanup: Disconnecting`)
         removeChannel(channelRef.current)
         channelRef.current = null
         setIsActuallyConnected(false)

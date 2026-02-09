@@ -157,6 +157,151 @@ function extractMessageId(data: unknown): string | undefined {
 }
 
 // =============================================================================
+// TYPING INDICATOR
+// =============================================================================
+
+export interface SendTypingIndicatorOptions {
+  /** The message ID from the received message (required by Meta API) */
+  messageId: string
+  /** Credentials override */
+  credentials?: WhatsAppCredentials
+}
+
+/**
+ * Send a typing indicator ("digitando...") to the user
+ *
+ * According to Meta docs (Oct 2025):
+ * - Requires the message_id from a received message
+ * - Typing indicator is dismissed after response OR after 25 seconds
+ * - Only show if you're going to respond
+ *
+ * @param options - Typing indicator options
+ * @returns Result with success status
+ */
+export async function sendTypingIndicator(
+  options: SendTypingIndicatorOptions
+): Promise<{ success: boolean; error?: string }> {
+  const credentials = options.credentials || await getWhatsAppCredentials()
+  if (!credentials?.accessToken || !credentials?.phoneNumberId) {
+    return { success: false, error: 'WhatsApp credentials not configured' }
+  }
+
+  try {
+    const response = await fetchWithTimeout(
+      `https://graph.facebook.com/v24.0/${credentials.phoneNumberId}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${credentials.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          status: 'read',
+          message_id: options.messageId,
+          typing_indicator: {
+            type: 'text',
+          },
+        }),
+        timeoutMs: 5000,
+      }
+    )
+
+    if (!response.ok) {
+      const data = await safeJson(response)
+      const metaError = data?.error?.message || 'Typing indicator failed'
+      console.warn(`[whatsapp-send] Typing indicator failed: ${metaError}`)
+      return { success: false, error: metaError }
+    }
+
+    return { success: true }
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+    console.warn(`[whatsapp-send] Typing indicator error: ${errorMsg}`)
+    return { success: false, error: errorMsg }
+  }
+}
+
+// =============================================================================
+// REACTION MESSAGE
+// =============================================================================
+
+export interface SendReactionOptions {
+  /** Recipient phone number */
+  to: string
+  /** The message ID to react to (whatsapp_message_id from inbound message) */
+  messageId: string
+  /** The emoji to react with */
+  emoji: string
+  /** Credentials override */
+  credentials?: WhatsAppCredentials
+}
+
+/**
+ * Send a reaction (emoji) to a user's message
+ *
+ * According to Meta docs:
+ * - Reaction appears attached to the original message
+ * - Only works on messages less than 30 days old
+ * - To remove a reaction, send an empty emoji string
+ *
+ * @param options - Reaction options
+ * @returns Result with success status
+ */
+export async function sendReaction(
+  options: SendReactionOptions
+): Promise<{ success: boolean; error?: string }> {
+  const credentials = options.credentials || await getWhatsAppCredentials()
+  if (!credentials?.accessToken || !credentials?.phoneNumberId) {
+    return { success: false, error: 'WhatsApp credentials not configured' }
+  }
+
+  // Normalize phone number
+  const normalizedTo = normalizePhoneNumber(options.to)
+  if (!normalizedTo || !/^\+\d{8,15}$/.test(normalizedTo)) {
+    return { success: false, error: `Invalid phone number: ${options.to}` }
+  }
+
+  try {
+    const response = await fetchWithTimeout(
+      `https://graph.facebook.com/v24.0/${credentials.phoneNumberId}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${credentials.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: normalizedTo.replace('+', ''), // API expects without +
+          type: 'reaction',
+          reaction: {
+            message_id: options.messageId,
+            emoji: options.emoji,
+          },
+        }),
+        timeoutMs: 5000,
+      }
+    )
+
+    if (!response.ok) {
+      const data = await safeJson(response)
+      const metaError = data?.error?.message || 'Reaction failed'
+      console.warn(`[whatsapp-send] Reaction failed: ${metaError}`)
+      return { success: false, error: metaError }
+    }
+
+    console.log(`[whatsapp-send] Reaction ${options.emoji} sent to message ${options.messageId}`)
+    return { success: true }
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+    console.warn(`[whatsapp-send] Reaction error: ${errorMsg}`)
+    return { success: false, error: errorMsg }
+  }
+}
+
+// =============================================================================
 // FLOW MESSAGE
 // =============================================================================
 

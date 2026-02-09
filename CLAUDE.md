@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-SmartZap é um SaaS de automação de marketing via WhatsApp, construído com Next.js 16 (App Router), React 19, Supabase (PostgreSQL) e Upstash QStash. Integra Meta WhatsApp Cloud API (v24.0) para mensagens com template e Vercel AI SDK para geração de conteúdo.
+SmartZap é um SaaS single-tenant de automação de marketing via WhatsApp, construído com Next.js 16 (App Router), React 19, Supabase (PostgreSQL) e Upstash QStash. Integra Meta WhatsApp Cloud API (v24.0) para mensagens com template e Vercel AI SDK v6 para geração de conteúdo.
 
 ## Development Commands
 
@@ -13,17 +13,27 @@ npm run dev              # Dev server (Turbopack)
 npm run build            # Production build
 npm run lint             # ESLint
 
-npm run test             # Vitest (unit tests)
-npm run test:watch       # Vitest watch mode
+# Unit tests (Vitest, jsdom)
+npm run test             # Run all
+npm run test:watch       # Watch mode
 npm run test:ui          # Vitest UI dashboard
 npm run test:coverage    # Coverage report
+vitest run path/to/file.test.ts          # Single test file
+vitest run -t "test name"                # Single test by name
 
-npm run test:e2e         # Playwright E2E tests
-npm run test:e2e:ui      # Playwright interactive UI
-npm run test:e2e:headed  # E2E with browser visible
+# E2E tests (Playwright, auto-starts dev server)
+npm run test:e2e         # Headless (chromium + mobile)
+npm run test:e2e:ui      # Interactive UI
+npm run test:e2e:headed  # Browser visible
+npx playwright test path/to/file.spec.ts # Single E2E file
 
-npm run test:all         # Unit + E2E tests
+# Specialized test suites
+npm run test:e2e:whatsapp       # WhatsApp E2E scenarios (Vitest)
+npm run test:ai:api             # AI API tests (Vitest)
+npm run test:all                # Unit + E2E combined
 ```
+
+**Test file conventions**: `*.test.ts` for Vitest, `*.spec.ts` for Playwright (in `tests/e2e/`).
 
 ## Architecture
 
@@ -39,7 +49,7 @@ services/campaignService.ts           # API calls (fetch wrapper)
 app/api/campaigns/route.ts            # API Route → Supabase DB
 ```
 
-- **Pages**: "thin" components that only connect hooks to views
+- **Pages**: thin components that only connect hooks to views
 - **Hooks**: controller pattern with React Query + local state + derived state
 - **Services**: typed fetch wrappers for API routes
 - **API Routes**: validation (Zod), business logic, DB operations
@@ -56,27 +66,74 @@ API Routes (Next.js)  →  QStash Workflow  →  Meta WhatsApp API
 
 ```
 app/                    # Next.js App Router
-  (auth)/               # Auth pages (login)
+  (auth)/               # Auth pages (login, install wizard)
   (dashboard)/          # Dashboard pages
   api/                  # API routes (28+ sub-directories)
-
 components/
   features/             # Feature-specific view components
-  ui/                   # shadcn/ui components
+  ui/                   # shadcn/ui (new-york style, RSC-enabled)
   builder/              # Workflow builder components
-
 hooks/                  # Controller hooks (React Query pattern)
 services/               # API client layer
 lib/                    # Business logic & utilities
   ai/                   # AI providers & prompts
   builder/              # Workflow executor
   whatsapp/             # WhatsApp API integration
-
 types.ts                # All TypeScript interfaces & enums
 supabase/migrations/    # SQL migrations (31+ files)
 ```
 
+### Provider Stack (app/providers.tsx)
+
+```
+ThemeProvider (next-themes, dark default)
+  → QueryClientProvider (staleTime: 30s, gcTime: 5min, retry: 1)
+    → DevModeProvider
+      → CentralizedRealtimeProvider (Supabase Realtime)
+        → PWAProvider
+```
+
 ## Key Patterns
+
+### Authentication
+
+Single-tenant: no user accounts. Two auth mechanisms:
+
+- **Dashboard login**: `MASTER_PASSWORD` env var (bcrypt-hashed comparison)
+- **API routes**: `Authorization: Bearer <key>` or `X-API-Key: <key>` header
+  - `SMARTZAP_API_KEY` — general API access
+  - `SMARTZAP_ADMIN_KEY` — admin endpoints (`/api/database/*`, `/api/vercel/*`)
+  - Public (no auth): `/api/webhook`, `/api/health`, `/api/flows`
+
+No middleware.ts — auth enforced per-route via `verifyApiKey()` from `lib/auth.ts`.
+
+### Supabase Client Types
+
+Three client patterns — use the right one for the context:
+
+```typescript
+// API Routes (server-side, bypasses RLS)
+import { getSupabaseAdmin } from '@/lib/supabase'
+const supabase = getSupabaseAdmin()
+
+// Client components (browser, respects RLS)
+import { getSupabaseBrowser } from '@/lib/supabase'
+const supabase = getSupabaseBrowser()
+
+// Server Components (cookie-aware, @supabase/ssr)
+import { createClient } from '@/lib/supabase-server'
+const supabase = await createClient()
+```
+
+Both return `null` when env vars are missing (allows install wizard to run unconfigured).
+
+### Database Layer (No ORM)
+
+```typescript
+// lib/supabase-db.ts - Direct Supabase queries with abstracted CRUD
+campaignDb.getAll()
+campaignDb.create({ name, templateName })
+```
 
 ### Component/Controller Separation
 
@@ -97,20 +154,9 @@ export const useCampaignsController = () => {
 };
 ```
 
-### Database Layer (No ORM)
-
-```typescript
-// lib/supabase-db.ts - Direct Supabase queries
-await supabase.from('campaigns').select('*').eq('id', campaignId)
-
-// Abstracted CRUD
-campaignDb.getAll()
-campaignDb.create({ name, templateName })
-```
-
 ### WhatsApp Credentials
 
-Credentials are fetched from Supabase `settings` table first, with env vars as fallback:
+Fetched from Supabase `settings` table first, env vars as fallback, Redis-cached (60s TTL):
 
 ```typescript
 import { getWhatsAppCredentials } from '@/lib/whatsapp-credentials'
@@ -136,7 +182,7 @@ validatePhoneNumber(phone)  // Uses libphonenumber-js
 
 ## Workflow Engine
 
-Workflow execution uses Upstash Workflow SDK with durable steps:
+Upstash Workflow SDK with durable steps:
 
 ```
 lib/builder/workflow-executor.workflow.ts  # Main executor
@@ -173,13 +219,22 @@ Node types: `start`, `message`, `template`, `menu`, `input`, `condition`, `delay
 
 ## Database Schema (Key Tables)
 
-- `settings` - Config (credentials, tokens)
+- `settings` - Config (credentials, tokens), Redis-cached
 - `campaigns` - Campaign metadata + counters (sent/delivered/read/failed)
 - `campaign_contacts` - Per-contact status + message_id
 - `contacts` - Contact info + custom fields
 - `templates` - Template cache (synced from Meta)
 - `flows` - Workflow definitions
 - `account_alerts` - Health alerts
+
+## Next.js Configuration
+
+- **React Compiler** enabled (automatic memoization)
+- **Standalone output** (Docker-ready)
+- **Server Actions**: 20MB body limit
+- **Optimized imports**: `lucide-react`, `@radix-ui/react-icons`
+- SQL migrations bundled via `outputFileTracingIncludes`
+- Path alias: `@/*` → project root
 
 ## Environment Variables
 
@@ -192,6 +247,9 @@ Required:
 Optional:
 - `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_BUSINESS_ACCOUNT_ID` (fallback if not in DB)
 - `GEMINI_API_KEY` (AI features)
+- `MEM0_API_KEY` (conversation memory)
+
+Env var aliases accepted: `SUPABASE_SECRET_KEY` / `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`
 
 ## Language Conventions
 
@@ -201,7 +259,7 @@ Optional:
 
 ## Styling
 
-- Tailwind CSS v4 with shadcn/ui components
+- Tailwind CSS v4 with shadcn/ui (new-york style)
 - Primary colors: `primary-400/500/600` (emerald/green)
 - Backgrounds: `zinc-800/900/950`
 - Icons: lucide-react exclusively
@@ -219,3 +277,4 @@ ContactStatus: OPT_IN | OPT_OUT | UNKNOWN
 
 - **Edge cache flash-back**: Deleted items may momentarily reappear due to Vercel 10s TTL cache
 - **Payment alerts**: Auto-shown on error 131042, auto-dismissed when delivery succeeds after fix
+- **Null Supabase clients**: `getSupabaseAdmin()` and `getSupabaseBrowser()` return `null` when not configured — callers must handle this for the install wizard flow

@@ -55,6 +55,10 @@ yarn-debug.log*
 .auto-claude/
 .devtools
 
+# Security audit evidence (sensitive - contains architecture details)
+.sb-pentest-evidence/
+.sb-pentest-context.json
+
 # GitHub AI configs (dev-only)
 .github/agents/
 .github/prompts/
@@ -80,6 +84,9 @@ scripts/*
 .DS_Store
 *.local
 
+# Supabase CLI temp files
+supabase/.temp/
+
 # Vercel
 .vercel
 
@@ -92,6 +99,9 @@ test-results/
 playwright-report/
 coverage/
 .nyc_output/
+
+# Testes (mantidos apenas localmente - repo público)
+tests/
 
 # Legacy (can be removed)
 # vite.config.ts
@@ -109,5 +119,6 @@ placeholder.txt
 research.md
 PRD-campaigns-new.md
 
-# Docs (dev-only, kept locally)
-docs/
+# Docs (dev-only, kept locally) - /docs/ ignora apenas na raiz
+/docs/
+.env*.local

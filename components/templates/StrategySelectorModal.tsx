@@ -12,7 +12,9 @@ import {
     Megaphone,
     Wrench,
     VenetianMask, // Ninja/Mask for Bypass
-    CheckCircle2
+    CheckCircle2,
+    Star,
+    AlertTriangle
 } from 'lucide-react';
 
 export type AIStrategy = 'marketing' | 'utility' | 'bypass';
@@ -27,30 +29,48 @@ export function StrategySelectorModal({ isOpen, onSelect, onClose }: StrategySel
     const strategies = [
         {
             id: 'marketing' as const,
-            title: 'Marketing (Vendas)',
+            title: 'Marketing',
+            subtitle: 'Vendas Diretas',
             icon: Megaphone,
-            color: 'text-amber-200 bg-amber-500/10 border-amber-500/20',
+            // Dourado vibrante
+            cardStyle: 'bg-gradient-to-b from-amber-900/40 to-amber-950/60 border-amber-500/40 hover:border-amber-400/60',
+            iconStyle: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+            checkStyle: 'text-amber-400',
             description: 'Foco total em conversão. Usa gatilhos mentais, urgência e copy persuasiva.',
             features: ['Categoria: MARKETING', 'Alta Conversão', 'Permite Promoções'],
-            warning: 'Custo mais alto por mensagem.'
+            warning: 'Custo mais alto por mensagem.',
+            warningStyle: 'text-amber-300',
+            badge: null
         },
         {
             id: 'utility' as const,
-            title: 'Utilidade (Padrão)',
+            title: 'Utilidade',
+            subtitle: 'Recomendado',
             icon: Wrench,
-            color: 'text-emerald-200 bg-emerald-500/10 border-emerald-500/20',
+            // Verde esmeralda forte
+            cardStyle: 'bg-gradient-to-b from-emerald-900/40 to-emerald-950/60 border-emerald-500/40 hover:border-emerald-400/60',
+            iconStyle: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+            checkStyle: 'text-emerald-400',
             description: 'Foco em avisos e notificações. Linguagem formal, seca e direta.',
             features: ['Categoria: UTILITY', 'Avisos Transacionais', 'Sem bloqueios'],
-            warning: 'Proibido termos de venda.'
+            warning: 'Proibido termos de venda.',
+            warningStyle: 'text-emerald-300',
+            badge: { icon: Star, text: 'Padrão', style: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' }
         },
         {
             id: 'bypass' as const,
-            title: 'Marketing Camuflado',
+            title: 'Camuflado',
+            subtitle: 'Marketing Disfarçado',
             icon: VenetianMask,
-            color: 'text-gray-300 bg-zinc-900/60 border-white/10',
+            // Roxo/cinza misterioso
+            cardStyle: 'bg-gradient-to-b from-violet-900/30 to-zinc-900/60 border-violet-500/30 hover:border-violet-400/50',
+            iconStyle: 'bg-violet-500/20 text-violet-400 border-violet-500/30',
+            checkStyle: 'text-violet-400',
             description: 'Tenta passar copy de vendas como Utilidade usando substituição de variáveis.',
             features: ['Categoria: UTILITY (Tentativa)', 'Custo Baixo', 'Anti-Spam AI'],
-            warning: 'Pode ser rejeitado se abusar.'
+            warning: 'Pode ser rejeitado se abusar.',
+            warningStyle: 'text-orange-300',
+            badge: { icon: AlertTriangle, text: 'Avançado', style: 'bg-orange-500/20 text-orange-400 border-orange-500/40' }
         }
     ];
 
@@ -72,31 +92,40 @@ export function StrategySelectorModal({ isOpen, onSelect, onClose }: StrategySel
                                 onSelect(strategy.id);
                             }}
                             className={`
-                                relative p-6 rounded-2xl border cursor-pointer transition-all hover:shadow-[0_12px_30px_rgba(0,0,0,0.35)]
-                                ${strategy.color}
+                                relative p-6 rounded-2xl border cursor-pointer transition-all hover:shadow-[0_12px_30px_rgba(0,0,0,0.35)] hover:scale-[1.02]
+                                ${strategy.cardStyle}
                             `}
                         >
+                            {/* Badge no canto superior direito */}
+                            {strategy.badge && (
+                                <div className={`absolute -top-2 -right-2 flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border ${strategy.badge.style}`}>
+                                    <strategy.badge.icon className="w-3 h-3" />
+                                    {strategy.badge.text}
+                                </div>
+                            )}
+
                             <div className="flex flex-col items-center text-center gap-4">
-                                <div className="p-4 rounded-full bg-zinc-950/40 border border-white/10 text-current">
+                                <div className={`p-4 rounded-full border ${strategy.iconStyle}`}>
                                     <strategy.icon className="w-8 h-8" />
                                 </div>
 
                                 <div>
-                                    <h3 className="font-bold text-lg mb-2">{strategy.title}</h3>
-                                    <p className="text-sm text-gray-300">{strategy.description}</p>
+                                    <h3 className="font-bold text-lg text-white">{strategy.title}</h3>
+                                    <p className="text-xs text-gray-400 font-medium">{strategy.subtitle}</p>
+                                    <p className="text-sm text-gray-300 mt-2">{strategy.description}</p>
                                 </div>
 
-                                <ul className="text-sm text-left w-full space-y-2 mt-2 bg-zinc-950/40 p-3 rounded-lg border border-white/10">
+                                <ul className="text-sm text-left w-full space-y-2 mt-2 bg-zinc-950/50 p-3 rounded-lg border border-white/10">
                                     {strategy.features.map((feat, i) => (
-                                        <li key={i} className="flex items-center gap-2">
-                                            <CheckCircle2 className="w-4 h-4 shrink-0" />
+                                        <li key={i} className="flex items-center gap-2 text-gray-300">
+                                            <CheckCircle2 className={`w-4 h-4 shrink-0 ${strategy.checkStyle}`} />
                                             {feat}
                                         </li>
                                     ))}
                                 </ul>
 
                                 {strategy.warning && (
-                                    <p className="text-xs font-semibold mt-2 text-amber-200">
+                                    <p className={`text-xs font-semibold mt-2 ${strategy.warningStyle}`}>
                                         {strategy.warning}
                                     </p>
                                 )}

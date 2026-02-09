@@ -337,6 +337,7 @@ const renderWhatsAppFormattedBody = (text: string, variant: PreviewVariant): Rea
 // BUTTON ICONS
 // ============================================================================
 
+// Ícones para tipos de botão suportados pela Meta API
 const BUTTON_ICONS: Record<string, React.ReactNode> = {
   'URL': <ExternalLink size={14} />,
   'PHONE_NUMBER': <Phone size={14} />,
@@ -344,15 +345,6 @@ const BUTTON_ICONS: Record<string, React.ReactNode> = {
   'COPY_CODE': <Copy size={14} />,
   'OTP': <Copy size={14} />,
   'FLOW': <MessageSquare size={14} />,
-  'CATALOG': <MessageSquare size={14} />,
-  'MPM': <MessageSquare size={14} />,
-  'VOICE_CALL': <Phone size={14} />,
-  'EXTENSION': <MessageSquare size={14} />,
-  'ORDER_DETAILS': <MessageSquare size={14} />,
-  'POSTBACK': <MessageSquare size={14} />,
-  'REMINDER': <MessageSquare size={14} />,
-  'SEND_LOCATION': <MessageSquare size={14} />,
-  'SPM': <MessageSquare size={14} />,
 };
 
 const isHttpUrl = (value: string) => /^https?:\/\//i.test(String(value || '').trim())

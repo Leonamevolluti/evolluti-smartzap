@@ -1,8 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchWithTimeout, safeJson } from '@/lib/server-http'
+import { getWhatsAppCredentials } from '@/lib/whatsapp-credentials'
+
+function isMaskedToken(token: unknown): boolean {
+  if (typeof token !== 'string') return false
+  const t = token.trim()
+  return t === '' || t === '***configured***' || t === '••••••••••'
+}
 
 export async function POST(request: NextRequest) {
-  const { phoneNumberId, accessToken } = await request.json()
+  const body = await request.json()
+  let phoneNumberId = (body.phoneNumberId || '').trim()
+  let accessToken = (body.accessToken || '').trim()
+
+  // Se o token está mascarado, usa o token salvo no banco
+  if (isMaskedToken(accessToken)) {
+    const creds = await getWhatsAppCredentials()
+    if (!creds?.accessToken) {
+      return NextResponse.json({ error: 'Token não configurado' }, { status: 400 })
+    }
+    accessToken = creds.accessToken
+  }
 
   if (!phoneNumberId || !accessToken) {
     return NextResponse.json({ error: 'Missing credentials' }, { status: 400 })

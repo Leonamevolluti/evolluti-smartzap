@@ -6,9 +6,12 @@
  *
  * O usuário escolhe o provider na config do agente.
  * Default: Google gemini-embedding-001 (768 dimensões, $0.025/1M tokens)
+ *
+ * Quando AI Gateway está habilitado, usa o Gateway para roteamento inteligente.
  */
 
 import { embed, embedMany } from 'ai'
+import { getAiGatewayConfig } from './ai-center-config'
 
 // =============================================================================
 // Types
@@ -81,14 +84,57 @@ export const DEFAULT_EMBEDDING_CONFIG: Omit<EmbeddingConfig, 'apiKey'> = {
 }
 
 // =============================================================================
+// AI Gateway Configuration
+// =============================================================================
+
+const AI_GATEWAY_BASE_URL = 'https://ai-gateway.vercel.sh/v1'
+
+// =============================================================================
 // Provider Factory
 // =============================================================================
 
 /**
  * Cria o modelo de embedding apropriado baseado no provider configurado
  * Retorna um modelo compatível com as funções embed/embedMany do AI SDK
+ *
+ * Quando AI Gateway está habilitado, usa o Gateway para roteamento inteligente.
  */
 async function getEmbeddingModel(config: EmbeddingConfig) {
+  // Verifica se AI Gateway está habilitado
+  const gatewayConfig = await getAiGatewayConfig()
+
+  if (gatewayConfig.enabled && (config.provider === 'google' || config.provider === 'openai')) {
+    // Usa AI Gateway para embedding
+    const { createOpenAI } = await import('@ai-sdk/openai')
+
+    const gatewayModelId = `${config.provider}/${config.model}`
+
+    // Headers para o Gateway
+    const headers: Record<string, string> = {}
+
+    // BYOK: passa a chave do provider se configurado
+    if (gatewayConfig.useBYOK && config.apiKey) {
+      const byokHeaderMap: Record<EmbeddingProvider, string> = {
+        google: 'x-google-api-key',
+        openai: 'x-openai-api-key',
+        voyage: 'x-voyage-api-key',
+        cohere: 'x-cohere-api-key',
+      }
+      headers[byokHeaderMap[config.provider]] = config.apiKey
+    }
+
+    const openai = createOpenAI({
+      apiKey: gatewayConfig.apiKey || 'dummy',
+      baseURL: AI_GATEWAY_BASE_URL,
+      headers,
+    })
+
+    console.log(`[embeddings] AI Gateway enabled: ${gatewayModelId}`)
+
+    return openai.embedding(gatewayModelId)
+  }
+
+  // Fallback: conexão direta
   switch (config.provider) {
     case 'google': {
       const { createGoogleGenerativeAI } = await import('@ai-sdk/google')

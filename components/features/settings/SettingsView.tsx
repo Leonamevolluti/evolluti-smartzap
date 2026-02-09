@@ -2,13 +2,14 @@ import React, { useEffect, useRef, useState } from 'react';
 import { TestContactPanel } from './TestContactPanel';
 import { AutoSuppressionPanel } from './AutoSuppressionPanel';
 import { WorkflowExecutionPanel } from './WorkflowExecutionPanel';
-import { MetaAppPanel } from './MetaAppPanel';
 import { StatusCard } from './StatusCard';
 import { TurboConfigSection } from './TurboConfigSection';
 import { WebhookConfigSection } from './WebhookConfigSection';
 import { CalendarBookingPanel } from './CalendarBookingPanel';
 import { FlowEndpointPanel } from './FlowEndpointPanel';
 import { CredentialsForm } from './CredentialsForm';
+import { UpstashConfigPanel } from './UpstashConfigPanel';
+import { ApiDocsPanel } from './ApiDocsPanel';
 import { useDevMode } from '@/components/providers/DevModeProvider';
 import type { SettingsViewProps } from './types';
 
@@ -84,6 +85,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   saveWorkflowExecution,
   isSavingWorkflowExecution,
 
+  // Upstash Config (métricas QStash)
+  upstashConfig,
+  upstashConfigLoading,
+  saveUpstashConfig,
+  removeUpstashConfig,
+  isSavingUpstashConfig,
+
 }) => {
   // Dev mode hook
   const { isDevMode } = useDevMode();
@@ -134,15 +142,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           onToggleEdit={() => setIsEditing((v) => !v)}
         />
 
-        {/* Meta App (opcional) — debug_token e diagnóstico avançado */}
-        {isDevMode && settings.isConnected && (
-          <MetaAppPanel
-            metaApp={metaApp}
-            metaAppLoading={metaAppLoading}
-            refreshMetaApp={refreshMetaApp}
-          />
-        )}
-
         {/* Credentials Form - Only visible if disconnected OR editing */}
         {(!settings.isConnected || isEditing) && (
           <CredentialsForm
@@ -159,9 +158,43 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           />
         )}
 
-        {/* Workflow Builder Default moved to /workflows */}
+        {/* ========== ORDEM: 1. Sistema Online (acima), 2. Webhooks, 3. Contato de Teste, 4. Agendamento ========== */}
 
-        {/* Calendar Booking Section */}
+        {/* 2. Webhook Configuration Section */}
+        {settings.isConnected && webhookUrl && (
+          <section id="webhooks">
+          <WebhookConfigSection
+            webhookUrl={webhookUrl}
+            webhookToken={webhookToken}
+            webhookStats={webhookStats}
+            webhookPath={webhookPath}
+            webhookSubscription={webhookSubscription}
+            webhookSubscriptionLoading={webhookSubscriptionLoading}
+            webhookSubscriptionMutating={webhookSubscriptionMutating}
+            onRefreshWebhookSubscription={onRefreshWebhookSubscription}
+            onSubscribeWebhookMessages={onSubscribeWebhookMessages}
+            onUnsubscribeWebhookMessages={onUnsubscribeWebhookMessages}
+            phoneNumbers={phoneNumbers}
+            phoneNumbersLoading={phoneNumbersLoading}
+            onRefreshPhoneNumbers={onRefreshPhoneNumbers}
+            onSetWebhookOverride={onSetWebhookOverride}
+            onRemoveWebhookOverride={onRemoveWebhookOverride}
+            availableDomains={availableDomains}
+          />
+          </section>
+        )}
+
+        {/* 3. Test Contact Section */}
+        {settings.isConnected && (
+          <TestContactPanel
+            testContact={testContact}
+            saveTestContact={saveTestContact}
+            removeTestContact={removeTestContact}
+            isSaving={isSavingTestContact}
+          />
+        )}
+
+        {/* 4. Calendar Booking Section (Agendamento) */}
         {settings.isConnected && (
           <CalendarBookingPanel
             isConnected={settings.isConnected}
@@ -172,18 +205,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           />
         )}
 
+        {/* 5. API Documentation Link */}
+        {settings.isConnected && <ApiDocsPanel />}
+
+        {/* ========== SEÇÕES DEV-ONLY ABAIXO ========== */}
+
         {/* Flow Endpoint (MiniApp Dinamico) - Dev only */}
         {isDevMode && settings.isConnected && <FlowEndpointPanel devBaseUrl={null} />}
-
-        {/* Test Contact Section */}
-        {settings.isConnected && (
-          <TestContactPanel
-            testContact={testContact}
-            saveTestContact={saveTestContact}
-            removeTestContact={removeTestContact}
-            isSaving={isSavingTestContact}
-          />
-        )}
 
         {/* WhatsApp Turbo (Adaptive Throttle) - Dev only */}
         {isDevMode && settings.isConnected && saveWhatsAppThrottle && (
@@ -216,28 +244,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           />
         )}
 
-
-
-
-        {/* Webhook Configuration Section */}
-        {settings.isConnected && webhookUrl && (
-          <WebhookConfigSection
-            webhookUrl={webhookUrl}
-            webhookToken={webhookToken}
-            webhookStats={webhookStats}
-            webhookPath={webhookPath}
-            webhookSubscription={webhookSubscription}
-            webhookSubscriptionLoading={webhookSubscriptionLoading}
-            webhookSubscriptionMutating={webhookSubscriptionMutating}
-            onRefreshWebhookSubscription={onRefreshWebhookSubscription}
-            onSubscribeWebhookMessages={onSubscribeWebhookMessages}
-            onUnsubscribeWebhookMessages={onUnsubscribeWebhookMessages}
-            phoneNumbers={phoneNumbers}
-            phoneNumbersLoading={phoneNumbersLoading}
-            onRefreshPhoneNumbers={onRefreshPhoneNumbers}
-            onSetWebhookOverride={onSetWebhookOverride}
-            onRemoveWebhookOverride={onRemoveWebhookOverride}
-            availableDomains={availableDomains}
+        {/* Métricas do QStash (Upstash Config) - Dev only */}
+        {isDevMode && settings.isConnected && saveUpstashConfig && (
+          <UpstashConfigPanel
+            upstashConfig={upstashConfig}
+            upstashConfigLoading={upstashConfigLoading}
+            saveUpstashConfig={saveUpstashConfig}
+            removeUpstashConfig={removeUpstashConfig}
+            isSaving={isSavingUpstashConfig}
           />
         )}
       </div>

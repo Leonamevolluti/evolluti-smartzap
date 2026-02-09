@@ -6,8 +6,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { listMessages, sendMessage } from '@/lib/inbox/inbox-service'
 
+// Regex para ISO 8601 datetime com precisão variável (Supabase pode retornar 1-6 dígitos)
+const ISO_DATETIME_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/
+
 const querySchema = z.object({
-  before: z.string().datetime().optional(),
+  before: z.string().regex(ISO_DATETIME_REGEX, 'Invalid ISO datetime').optional(),
   limit: z.coerce.number().int().positive().max(100).default(50),
 })
 

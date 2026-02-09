@@ -1,12 +1,13 @@
 -- =============================================================================
 -- SMARTZAP - SCHEMA INICIAL
 -- Gerado: 2026-01-22 via pg_dump
+-- Atualizado: 2026-01-24 - Adicionado funções RPC para contadores atômicos
 --
--- Contém: 38 tabelas, 13 funções, 100 indexes, 9 triggers, 29 FKs
+-- Contém: 38 tabelas, 16 funções, 102 indexes, 9 triggers, 29 FKs
 -- =============================================================================
 
--- Extensão necessária para embeddings de IA
-CREATE EXTENSION IF NOT EXISTS vector;
+-- Extensão necessária para embeddings de IA (schema extensions = best practice Supabase)
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;
 CREATE FUNCTION public.get_campaign_contact_stats(p_campaign_id text) RETURNS json
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
@@ -123,7 +124,7 @@ BEGIN
 END;
 $_$;
 
-CREATE FUNCTION public.search_embeddings(query_embedding public.vector, match_threshold double precision DEFAULT 0.7, match_count integer DEFAULT 5, p_agent_id uuid DEFAULT NULL::uuid) RETURNS TABLE(id uuid, content text, metadata jsonb, similarity double precision)
+CREATE FUNCTION public.search_embeddings(query_embedding extensions.vector, match_threshold double precision DEFAULT 0.7, match_count integer DEFAULT 5, p_agent_id uuid DEFAULT NULL::uuid) RETURNS TABLE(id uuid, content text, metadata jsonb, similarity double precision)
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO ''
     AS $$
@@ -143,7 +144,7 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION public.search_embeddings(query_embedding public.vector, agent_id_filter uuid, expected_dimensions integer, match_threshold double precision DEFAULT 0.5, match_count integer DEFAULT 5) RETURNS TABLE(id uuid, content text, similarity double precision, metadata jsonb)
+CREATE FUNCTION public.search_embeddings(query_embedding extensions.vector, agent_id_filter uuid, expected_dimensions integer, match_threshold double precision DEFAULT 0.5, match_count integer DEFAULT 5) RETURNS TABLE(id uuid, content text, similarity double precision, metadata jsonb)
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -208,6 +209,45 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+-- Ensures the first AI agent is always marked as default
+CREATE FUNCTION public.ensure_default_ai_agent()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path TO ''
+AS $$
+BEGIN
+  -- If this is the first agent (no others exist), mark as default
+  IF NOT EXISTS (
+    SELECT 1 FROM public.ai_agents WHERE id != NEW.id
+  ) THEN
+    NEW.is_default := true;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- RPC: ANALYZE em tabelas de alto volume (whitelist)
+CREATE OR REPLACE FUNCTION public.analyze_table(table_name text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF table_name NOT IN (
+    'campaign_contacts',
+    'contacts',
+    'inbox_messages',
+    'whatsapp_status_events'
+  ) THEN
+    RAISE EXCEPTION 'Table "%" is not in the allowed list for ANALYZE', table_name;
+  END IF;
+
+  EXECUTE format('ANALYZE %I', table_name);
+END;
+$$;
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -263,16 +303,21 @@ Se o cliente estiver frustrado ou insatisfeito:
 2. Ofereça a OPÇÃO de falar com humano
 3. Só transfira se ele aceitar'::text,
     booking_tool_enabled boolean DEFAULT false NOT NULL,
+    allow_reactions boolean DEFAULT true,
+    allow_quotes boolean DEFAULT true,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+COMMENT ON COLUMN public.ai_agents.allow_reactions IS 'Permite que o agente envie reações (emoji) às mensagens do usuário';
+COMMENT ON COLUMN public.ai_agents.allow_quotes IS 'Permite que o agente cite mensagens do usuário nas respostas';
 
 CREATE TABLE public.ai_embeddings (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     agent_id uuid NOT NULL,
     file_id uuid,
     content text NOT NULL,
-    embedding public.vector(768) NOT NULL,
+    embedding extensions.vector(768) NOT NULL,
     dimensions integer NOT NULL,
     metadata jsonb DEFAULT '{}'::jsonb,
     created_at timestamp with time zone DEFAULT now()
@@ -594,6 +639,266 @@ CREATE TABLE public.inbox_conversations (
     CONSTRAINT chk_inbox_conversations_status CHECK ((status = ANY (ARRAY['open'::text, 'closed'::text])))
 );
 
+-- =============================================================================
+-- Funções RPC para contadores atômicos (inbox)
+-- IMPORTANTE: Estas funções DEVEM estar após a criação da tabela inbox_conversations
+-- pois retornam o tipo composto public.inbox_conversations
+-- =============================================================================
+
+-- Incrementa contadores de conversa de forma atômica (elimina race condition)
+CREATE FUNCTION public.increment_conversation_counters(
+  p_conversation_id UUID,
+  p_direction TEXT DEFAULT 'inbound',
+  p_message_preview TEXT DEFAULT NULL
+)
+RETURNS public.inbox_conversations
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+DECLARE
+  v_result public.inbox_conversations;
+BEGIN
+  UPDATE inbox_conversations
+  SET
+    total_messages = total_messages + 1,
+    unread_count = CASE
+      WHEN p_direction = 'inbound' THEN unread_count + 1
+      ELSE unread_count
+    END,
+    last_message_at = NOW(),
+    last_message_preview = COALESCE(
+      CASE
+        WHEN LENGTH(p_message_preview) > 100
+        THEN SUBSTRING(p_message_preview, 1, 100) || '...'
+        ELSE p_message_preview
+      END,
+      last_message_preview
+    ),
+    updated_at = NOW()
+  WHERE id = p_conversation_id
+  RETURNING * INTO v_result;
+
+  RETURN v_result;
+END;
+$$;
+
+-- Decrementa contador de não lidas (nunca fica negativo)
+CREATE FUNCTION public.decrement_unread_count(
+  p_conversation_id UUID,
+  p_amount INT DEFAULT 1
+)
+RETURNS public.inbox_conversations
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+DECLARE
+  v_result public.inbox_conversations;
+BEGIN
+  UPDATE inbox_conversations
+  SET
+    unread_count = GREATEST(0, unread_count - p_amount),
+    updated_at = NOW()
+  WHERE id = p_conversation_id
+  RETURNING * INTO v_result;
+
+  RETURN v_result;
+END;
+$$;
+
+-- Reseta contador de não lidas para zero (marca como lida)
+CREATE FUNCTION public.reset_unread_count(
+  p_conversation_id UUID
+)
+RETURNS public.inbox_conversations
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+DECLARE
+  v_result public.inbox_conversations;
+BEGIN
+  UPDATE inbox_conversations
+  SET
+    unread_count = 0,
+    updated_at = NOW()
+  WHERE id = p_conversation_id
+  RETURNING * INTO v_result;
+
+  RETURN v_result;
+END;
+$$;
+
+-- =============================================================================
+-- RPC: Processa mensagem inbound de forma atômica
+-- Reduz de 4-5 queries para 1 RPC call
+-- =============================================================================
+CREATE FUNCTION public.process_inbound_message(
+  p_phone TEXT,
+  p_content TEXT,
+  p_whatsapp_message_id TEXT DEFAULT NULL,
+  p_message_type TEXT DEFAULT 'text',
+  p_media_url TEXT DEFAULT NULL,
+  p_payload JSONB DEFAULT NULL,
+  p_contact_id TEXT DEFAULT NULL
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+DECLARE
+  v_conversation_id UUID;
+  v_message_id UUID;
+  v_conversation_status TEXT;
+  v_conversation_mode TEXT;
+  v_ai_agent_id UUID;
+  v_human_mode_expires_at TIMESTAMPTZ;
+  v_automation_paused_until TIMESTAMPTZ;
+  v_is_new_conversation BOOLEAN := FALSE;
+  v_message_preview TEXT;
+  -- FIX: Mudado de UUID para TEXT (contacts.id usa prefixo 'ct_')
+  v_contact_id TEXT;
+  v_current_contact_id TEXT;
+BEGIN
+  -- Auto-lookup contact by phone if not provided
+  IF p_contact_id IS NULL THEN
+    SELECT id INTO v_contact_id FROM contacts WHERE phone = p_phone LIMIT 1;
+  ELSE
+    v_contact_id := p_contact_id;  -- Já é TEXT, não precisa de cast
+  END IF;
+
+  -- Trunca preview para 100 chars
+  v_message_preview := CASE
+    WHEN LENGTH(p_content) > 100 THEN SUBSTRING(p_content, 1, 100) || '...'
+    ELSE p_content
+  END;
+
+  -- 1. Busca conversa existente pelo telefone (usa idx_inbox_conversations_phone_covering)
+  SELECT
+    id, status, mode, ai_agent_id, human_mode_expires_at, automation_paused_until, contact_id
+  INTO
+    v_conversation_id, v_conversation_status, v_conversation_mode,
+    v_ai_agent_id, v_human_mode_expires_at, v_automation_paused_until, v_current_contact_id
+  FROM inbox_conversations
+  WHERE phone = p_phone
+  ORDER BY last_message_at DESC NULLS LAST
+  LIMIT 1;
+
+  -- 2. Se não existe, cria nova conversa
+  IF v_conversation_id IS NULL THEN
+    INSERT INTO inbox_conversations (
+      phone,
+      contact_id,
+      mode,
+      status,
+      total_messages,
+      unread_count,
+      last_message_at,
+      last_message_preview
+    ) VALUES (
+      p_phone,
+      v_contact_id,
+      'bot',
+      'open',
+      1,
+      1,
+      NOW(),
+      v_message_preview
+    )
+    RETURNING id, mode, ai_agent_id, human_mode_expires_at, automation_paused_until
+    INTO v_conversation_id, v_conversation_mode, v_ai_agent_id,
+         v_human_mode_expires_at, v_automation_paused_until;
+
+    v_is_new_conversation := TRUE;
+    v_conversation_status := 'open';
+  ELSE
+    -- 3. Se existe, atualiza contadores e reabre se fechada
+    -- Auto-link contact if conversation has no contact but we found one
+    UPDATE inbox_conversations
+    SET
+      total_messages = total_messages + 1,
+      unread_count = unread_count + 1,
+      last_message_at = NOW(),
+      last_message_preview = v_message_preview,
+      status = CASE WHEN status = 'closed' THEN 'open' ELSE status END,
+      contact_id = COALESCE(contact_id, v_contact_id),  -- Agora ambos são TEXT
+      updated_at = NOW()
+    WHERE id = v_conversation_id
+    RETURNING status INTO v_conversation_status;
+  END IF;
+
+  -- 4. Cria mensagem
+  INSERT INTO inbox_messages (
+    conversation_id,
+    direction,
+    content,
+    message_type,
+    whatsapp_message_id,
+    media_url,
+    delivery_status,
+    payload
+  ) VALUES (
+    v_conversation_id,
+    'inbound',
+    p_content,
+    p_message_type,
+    p_whatsapp_message_id,
+    p_media_url,
+    'delivered',
+    p_payload
+  )
+  RETURNING id INTO v_message_id;
+
+  -- 5. Retorna resultado completo
+  RETURN json_build_object(
+    'conversation_id', v_conversation_id,
+    'message_id', v_message_id,
+    'is_new_conversation', v_is_new_conversation,
+    'conversation_status', v_conversation_status,
+    'conversation_mode', v_conversation_mode,
+    'ai_agent_id', v_ai_agent_id,
+    'human_mode_expires_at', v_human_mode_expires_at,
+    'automation_paused_until', v_automation_paused_until
+  );
+END;
+$$;
+
+COMMENT ON FUNCTION public.process_inbound_message IS
+'Processa mensagem inbound de forma atômica: busca/cria conversa + cria mensagem + atualiza contadores. Auto-vincula contatos pelo telefone.';
+
+-- =============================================================================
+-- RPC: Busca configurações do agente de forma otimizada
+-- =============================================================================
+CREATE FUNCTION public.get_agent_config(
+  p_conversation_id UUID
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+DECLARE
+  v_result JSON;
+BEGIN
+  SELECT json_build_object(
+    'ai_agent_id', c.ai_agent_id,
+    'debounce_ms', COALESCE(a.debounce_ms, 3000),
+    'agent_name', a.name
+  )
+  INTO v_result
+  FROM inbox_conversations c
+  LEFT JOIN ai_agents a ON a.id = c.ai_agent_id
+  WHERE c.id = p_conversation_id;
+
+  RETURN v_result;
+END;
+$$;
+
+COMMENT ON FUNCTION public.get_agent_config IS
+'Busca configuração do agente de IA para uma conversa em uma única query.';
+
 CREATE TABLE public.inbox_labels (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     name text NOT NULL,
@@ -709,7 +1014,8 @@ CREATE TABLE public.template_projects (
     approved_count integer DEFAULT 0,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone,
-    source text DEFAULT 'ai'::text
+    source text DEFAULT 'ai'::text,
+    strategy text DEFAULT 'utility'::text
 );
 
 CREATE TABLE public.templates (
@@ -1021,9 +1327,9 @@ ALTER TABLE ONLY public.workflows
 
 CREATE INDEX ai_embeddings_agent_dimensions_idx ON public.ai_embeddings USING btree (agent_id, dimensions);
 
-CREATE INDEX ai_embeddings_agent_id_idx ON public.ai_embeddings USING btree (agent_id);
+-- ai_embeddings_agent_id_idx removido: redundante com ai_embeddings_agent_dimensions_idx(agent_id, dimensions)
 
-CREATE INDEX ai_embeddings_embedding_idx ON public.ai_embeddings USING hnsw (embedding public.vector_cosine_ops);
+CREATE INDEX ai_embeddings_embedding_idx ON public.ai_embeddings USING hnsw (embedding extensions.vector_cosine_ops);
 
 CREATE INDEX ai_embeddings_file_id_idx ON public.ai_embeddings USING btree (file_id);
 
@@ -1049,7 +1355,7 @@ CREATE INDEX campaigns_first_dispatch_at_idx ON public.campaigns USING btree (fi
 
 CREATE INDEX campaigns_last_sent_at_idx ON public.campaigns USING btree (last_sent_at DESC);
 
-CREATE INDEX idx_account_alerts_dismissed ON public.account_alerts USING btree (dismissed);
+-- idx_account_alerts_dismissed removido: redundante com idx_account_alerts_dismissed_created(dismissed, created_at)
 
 CREATE INDEX idx_account_alerts_dismissed_created ON public.account_alerts USING btree (dismissed, created_at DESC);
 
@@ -1069,11 +1375,13 @@ CREATE INDEX idx_ai_knowledge_files_created_at ON public.ai_knowledge_files USIN
 
 CREATE INDEX idx_attendant_tokens_active ON public.attendant_tokens USING btree (is_active) WHERE (is_active = true);
 
-CREATE INDEX idx_attendant_tokens_token ON public.attendant_tokens USING btree (token);
-
-CREATE INDEX idx_campaign_contacts_campaign ON public.campaign_contacts USING btree (campaign_id);
+-- idx_attendant_tokens_token removido: redundante com attendant_tokens_token_key UNIQUE
+-- idx_campaign_contacts_campaign removido: redundante com UNIQUE(campaign_id, contact_id) e compostos
 
 CREATE INDEX idx_campaign_contacts_campaign_phone ON public.campaign_contacts USING btree (campaign_id, phone);
+
+-- Composite: tela de detalhes filtra por campaign_id + status
+CREATE INDEX idx_campaign_contacts_campaign_status ON public.campaign_contacts USING btree (campaign_id, status);
 
 CREATE INDEX idx_campaign_contacts_contact_id ON public.campaign_contacts USING btree (contact_id);
 
@@ -1097,7 +1405,7 @@ CREATE INDEX idx_campaign_contacts_status ON public.campaign_contacts USING btre
 
 CREATE INDEX idx_campaign_contacts_trace_id ON public.campaign_contacts USING btree (trace_id);
 
-CREATE INDEX idx_campaign_tag_assignments_campaign ON public.campaign_tag_assignments USING btree (campaign_id);
+-- idx_campaign_tag_assignments_campaign removido: redundante com PK(campaign_id, tag_id)
 
 CREATE INDEX idx_campaign_tag_assignments_tag ON public.campaign_tag_assignments USING btree (tag_id);
 
@@ -1111,13 +1419,17 @@ CREATE INDEX idx_campaigns_qstash_schedule_message_id ON public.campaigns USING 
 
 CREATE INDEX idx_campaigns_status ON public.campaigns USING btree (status);
 
+-- Partial index: hot path de campanhas ativas (dashboard + polling)
+CREATE INDEX idx_campaigns_active ON public.campaigns USING btree (status, scheduled_date)
+  WHERE status IN ('Enviando', 'Agendado');
+
 CREATE INDEX idx_contacts_custom_fields ON public.contacts USING gin (custom_fields);
 
-CREATE INDEX idx_contacts_phone ON public.contacts USING btree (phone);
+-- idx_contacts_phone removido: redundante com contacts_phone_key UNIQUE
 
 CREATE INDEX idx_contacts_status ON public.contacts USING btree (status);
 
-CREATE INDEX idx_custom_field_definitions_entity ON public.custom_field_definitions USING btree (entity_type);
+-- idx_custom_field_definitions_entity removido: redundante com UNIQUE(entity_type, key)
 
 CREATE INDEX idx_flow_submissions_campaign_id ON public.flow_submissions USING btree (campaign_id);
 
@@ -1151,15 +1463,39 @@ CREATE INDEX idx_inbox_conversations_last_message_at ON public.inbox_conversatio
 
 CREATE INDEX idx_inbox_conversations_mode_status ON public.inbox_conversations USING btree (mode, status);
 
-CREATE INDEX idx_inbox_conversations_phone ON public.inbox_conversations USING btree (phone);
+-- idx_inbox_conversations_phone removido: redundante com phone_status e phone_covering
+
+-- Índice composto para busca por telefone no webhook (hot path)
+CREATE INDEX idx_inbox_conversations_phone_status ON public.inbox_conversations USING btree (phone, status);
 
 CREATE INDEX idx_inbox_conversations_human_mode_expires ON public.inbox_conversations USING btree (human_mode_expires_at) WHERE (mode = 'human' AND human_mode_expires_at IS NOT NULL);
 
-CREATE INDEX idx_inbox_messages_conversation_id ON public.inbox_messages USING btree (conversation_id);
+-- Covering Index para busca lightweight (index-only scan)
+-- Inclui todos os campos usados no SELECT da função findConversationByPhoneLightweight
+CREATE INDEX idx_inbox_conversations_phone_covering
+ON inbox_conversations (phone)
+INCLUDE (
+  id,
+  status,
+  mode,
+  ai_agent_id,
+  contact_id,
+  human_mode_expires_at,
+  automation_paused_until,
+  total_messages,
+  unread_count,
+  last_message_at
+);
+
+-- idx_inbox_messages_conversation_id removido: redundante com idx_inbox_messages_conversation_created(conversation_id, created_at)
+
+-- Composite: hot path do chat (pagination por conversa)
+CREATE INDEX idx_inbox_messages_conversation_created ON public.inbox_messages USING btree (conversation_id, created_at DESC);
 
 CREATE INDEX idx_inbox_messages_created_at ON public.inbox_messages USING btree (created_at);
 
-CREATE INDEX idx_inbox_messages_whatsapp_id ON public.inbox_messages USING btree (whatsapp_message_id) WHERE (whatsapp_message_id IS NOT NULL);
+-- Índice para status updates do WhatsApp (renomeado de whatsapp_id para whatsapp_msg_id)
+CREATE INDEX idx_inbox_messages_whatsapp_msg_id ON public.inbox_messages USING btree (whatsapp_message_id) WHERE (whatsapp_message_id IS NOT NULL);
 
 CREATE INDEX idx_lead_forms_collect_email ON public.lead_forms USING btree (collect_email);
 
@@ -1183,7 +1519,7 @@ CREATE INDEX idx_template_project_items_status ON public.template_project_items 
 
 CREATE INDEX idx_template_projects_status ON public.template_projects USING btree (status);
 
-CREATE INDEX idx_templates_name ON public.templates USING btree (name);
+-- idx_templates_name removido: redundante com UNIQUE(name, language)
 
 CREATE INDEX idx_templates_status ON public.templates USING btree (status);
 
@@ -1221,7 +1557,44 @@ CREATE INDEX workflow_versions_workflow_id_idx ON public.workflow_versions USING
 
 CREATE UNIQUE INDEX workflow_versions_workflow_version_idx ON public.workflow_versions USING btree (workflow_id, version);
 
+-- =============================================================================
+-- AUTOVACUUM TUNING: Tabelas de alto volume
+-- Defaults do Postgres: vacuum_scale_factor=0.20, analyze_scale_factor=0.10
+-- Reduzido para manter estatísticas frescas e evitar bloat
+-- =============================================================================
+
+ALTER TABLE public.campaign_contacts SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_analyze_scale_factor = 0.02,
+  autovacuum_vacuum_cost_delay = 2
+);
+
+ALTER TABLE public.inbox_messages SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_analyze_scale_factor = 0.02,
+  autovacuum_vacuum_cost_delay = 2
+);
+
+ALTER TABLE public.inbox_conversations SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_analyze_scale_factor = 0.02,
+  autovacuum_vacuum_cost_delay = 2
+);
+
+ALTER TABLE public.whatsapp_status_events SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_analyze_scale_factor = 0.02,
+  autovacuum_vacuum_cost_delay = 2
+);
+
+ALTER TABLE public.campaigns SET (
+  autovacuum_vacuum_scale_factor = 0.10,
+  autovacuum_analyze_scale_factor = 0.05
+);
+
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.ai_agents FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER ensure_default_ai_agent_trigger BEFORE INSERT ON public.ai_agents FOR EACH ROW EXECUTE FUNCTION public.ensure_default_ai_agent();
 
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.campaigns FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
@@ -1327,6 +1700,236 @@ ALTER TABLE ONLY public.workflows
     ADD CONSTRAINT workflows_active_version_fk FOREIGN KEY (active_version_id) REFERENCES public.workflow_versions(id) ON DELETE SET NULL;
 
 -- =============================================================================
+-- SECURITY: Protege TODAS as funções SECURITY DEFINER
+-- =============================================================================
+-- App é single-tenant e usa service_role (bypassa RLS) em todas as API routes.
+-- REVOKE de anon/PUBLIC impede que a publishable key seja usada para chamar
+-- funções que rodam com privilégio de postgres via PostgREST /rpc/.
+-- =============================================================================
+
+-- Funções de contadores/inbox
+REVOKE ALL ON FUNCTION public.increment_conversation_counters(uuid, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.increment_conversation_counters(uuid, text, text) FROM anon;
+REVOKE ALL ON FUNCTION public.increment_conversation_counters(uuid, text, text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.increment_conversation_counters(uuid, text, text) TO service_role;
+
+REVOKE ALL ON FUNCTION public.decrement_unread_count(uuid, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.decrement_unread_count(uuid, integer) FROM anon;
+REVOKE ALL ON FUNCTION public.decrement_unread_count(uuid, integer) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.decrement_unread_count(uuid, integer) TO service_role;
+
+REVOKE ALL ON FUNCTION public.reset_unread_count(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.reset_unread_count(uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.reset_unread_count(uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.reset_unread_count(uuid) TO service_role;
+
+REVOKE ALL ON FUNCTION public.process_inbound_message(text, text, text, text, text, jsonb, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.process_inbound_message(text, text, text, text, text, jsonb, text) FROM anon;
+REVOKE ALL ON FUNCTION public.process_inbound_message(text, text, text, text, text, jsonb, text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.process_inbound_message(text, text, text, text, text, jsonb, text) TO service_role;
+
+REVOKE ALL ON FUNCTION public.get_agent_config(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_agent_config(uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.get_agent_config(uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.get_agent_config(uuid) TO service_role;
+
+-- Funções de stats/dashboard
+REVOKE ALL ON FUNCTION public.get_campaign_contact_stats(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_campaign_contact_stats(text) FROM anon;
+REVOKE ALL ON FUNCTION public.get_campaign_contact_stats(text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.get_campaign_contact_stats(text) TO service_role;
+
+REVOKE ALL ON FUNCTION public.get_campaigns_with_all_tags(uuid[]) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_campaigns_with_all_tags(uuid[]) FROM anon;
+REVOKE ALL ON FUNCTION public.get_campaigns_with_all_tags(uuid[]) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.get_campaigns_with_all_tags(uuid[]) TO service_role;
+
+REVOKE ALL ON FUNCTION public.get_contact_stats() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_contact_stats() FROM anon;
+REVOKE ALL ON FUNCTION public.get_contact_stats() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.get_contact_stats() TO service_role;
+
+REVOKE ALL ON FUNCTION public.get_contact_tags() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_contact_tags() FROM anon;
+REVOKE ALL ON FUNCTION public.get_contact_tags() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.get_contact_tags() TO service_role;
+
+REVOKE ALL ON FUNCTION public.get_dashboard_stats() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_dashboard_stats() FROM anon;
+REVOKE ALL ON FUNCTION public.get_dashboard_stats() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.get_dashboard_stats() TO service_role;
+
+-- Funções de campaign stats
+REVOKE ALL ON FUNCTION public.increment_campaign_stat(text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.increment_campaign_stat(text, text) FROM anon;
+REVOKE ALL ON FUNCTION public.increment_campaign_stat(text, text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.increment_campaign_stat(text, text) TO service_role;
+
+REVOKE ALL ON FUNCTION public.increment_campaign_stat(uuid, text, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.increment_campaign_stat(uuid, text, integer) FROM anon;
+REVOKE ALL ON FUNCTION public.increment_campaign_stat(uuid, text, integer) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.increment_campaign_stat(uuid, text, integer) TO service_role;
+
+-- Funções de AI/embeddings
+REVOKE ALL ON FUNCTION public.search_embeddings(extensions.vector, double precision, integer, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.search_embeddings(extensions.vector, double precision, integer, uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.search_embeddings(extensions.vector, double precision, integer, uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.search_embeddings(extensions.vector, double precision, integer, uuid) TO service_role;
+
+REVOKE ALL ON FUNCTION public.search_embeddings(extensions.vector, uuid, integer, double precision, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.search_embeddings(extensions.vector, uuid, integer, double precision, integer) FROM anon;
+REVOKE ALL ON FUNCTION public.search_embeddings(extensions.vector, uuid, integer, double precision, integer) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.search_embeddings(extensions.vector, uuid, integer, double precision, integer) TO service_role;
+
+-- Trigger functions
+REVOKE ALL ON FUNCTION public.ensure_default_ai_agent() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.ensure_default_ai_agent() FROM anon;
+REVOKE ALL ON FUNCTION public.ensure_default_ai_agent() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.ensure_default_ai_agent() TO service_role;
+
+REVOKE ALL ON FUNCTION public.update_attendant_tokens_updated_at() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.update_attendant_tokens_updated_at() FROM anon;
+REVOKE ALL ON FUNCTION public.update_attendant_tokens_updated_at() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.update_attendant_tokens_updated_at() TO service_role;
+
+REVOKE ALL ON FUNCTION public.update_campaign_dispatch_metrics() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.update_campaign_dispatch_metrics() FROM anon;
+REVOKE ALL ON FUNCTION public.update_campaign_dispatch_metrics() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.update_campaign_dispatch_metrics() TO service_role;
+
+REVOKE ALL ON FUNCTION public.update_campaign_folders_updated_at() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.update_campaign_folders_updated_at() FROM anon;
+REVOKE ALL ON FUNCTION public.update_campaign_folders_updated_at() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.update_campaign_folders_updated_at() TO service_role;
+
+REVOKE ALL ON FUNCTION public.update_updated_at_column() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.update_updated_at_column() FROM anon;
+REVOKE ALL ON FUNCTION public.update_updated_at_column() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.update_updated_at_column() TO service_role;
+
+-- analyze_table
+REVOKE ALL ON FUNCTION public.analyze_table(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.analyze_table(text) FROM anon;
+REVOKE ALL ON FUNCTION public.analyze_table(text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.analyze_table(text) TO service_role;
+
+-- =============================================================================
+-- ROW LEVEL SECURITY
+-- =============================================================================
+-- RLS habilitado em TODAS as tabelas. service_role bypassa automaticamente.
+-- 7 tabelas com policy SELECT para anon (frontend Realtime).
+-- =============================================================================
+
+ALTER TABLE public.account_alerts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.ai_agent_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.ai_agents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.ai_embeddings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.ai_knowledge_files ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.attendant_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.campaign_batch_metrics ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.campaign_contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.campaign_folders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.campaign_run_metrics ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.campaigns ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.campaign_tag_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.campaign_tags ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.campaign_trace_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.custom_field_definitions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.flow_submissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.flows ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inbox_conversation_labels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inbox_conversations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inbox_labels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inbox_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inbox_quick_replies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.lead_forms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.phone_suppressions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.push_subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.template_project_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.template_projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.whatsapp_status_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.workflow_builder_executions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.workflow_builder_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.workflow_conversations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.workflow_run_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.workflow_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.workflow_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.workflows ENABLE ROW LEVEL SECURITY;
+
+-- Policies SELECT para Realtime (anon pode ler)
+CREATE POLICY "anon_select_campaigns" ON public.campaigns FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_select_contacts" ON public.contacts FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_select_templates" ON public.templates FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_select_flows" ON public.flows FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_select_inbox_conversations" ON public.inbox_conversations FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_select_inbox_messages" ON public.inbox_messages FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_select_account_alerts" ON public.account_alerts FOR SELECT TO anon USING (true);
+
+-- =============================================================================
+-- SECURITY HARDENING: Table-level grants
+-- =============================================================================
+-- REVOKE ALL nas 31 tabelas sem policies + view
+-- Nas 7 tabelas com policy, manter apenas SELECT
+-- =============================================================================
+
+REVOKE ALL ON TABLE public.ai_agents FROM anon, authenticated;
+REVOKE ALL ON TABLE public.ai_agent_logs FROM anon, authenticated;
+REVOKE ALL ON TABLE public.ai_embeddings FROM anon, authenticated;
+REVOKE ALL ON TABLE public.ai_knowledge_files FROM anon, authenticated;
+REVOKE ALL ON TABLE public.attendant_tokens FROM anon, authenticated;
+REVOKE ALL ON TABLE public.settings FROM anon, authenticated;
+REVOKE ALL ON TABLE public.campaign_batch_metrics FROM anon, authenticated;
+REVOKE ALL ON TABLE public.campaign_contacts FROM anon, authenticated;
+REVOKE ALL ON TABLE public.campaign_folders FROM anon, authenticated;
+REVOKE ALL ON TABLE public.campaign_run_metrics FROM anon, authenticated;
+REVOKE ALL ON TABLE public.campaign_tag_assignments FROM anon, authenticated;
+REVOKE ALL ON TABLE public.campaign_tags FROM anon, authenticated;
+REVOKE ALL ON TABLE public.campaign_trace_events FROM anon, authenticated;
+REVOKE ALL ON TABLE public.custom_field_definitions FROM anon, authenticated;
+REVOKE ALL ON TABLE public.flow_submissions FROM anon, authenticated;
+REVOKE ALL ON TABLE public.inbox_conversation_labels FROM anon, authenticated;
+REVOKE ALL ON TABLE public.inbox_labels FROM anon, authenticated;
+REVOKE ALL ON TABLE public.inbox_quick_replies FROM anon, authenticated;
+REVOKE ALL ON TABLE public.lead_forms FROM anon, authenticated;
+REVOKE ALL ON TABLE public.phone_suppressions FROM anon, authenticated;
+REVOKE ALL ON TABLE public.push_subscriptions FROM anon, authenticated;
+REVOKE ALL ON TABLE public.template_project_items FROM anon, authenticated;
+REVOKE ALL ON TABLE public.template_projects FROM anon, authenticated;
+REVOKE ALL ON TABLE public.whatsapp_status_events FROM anon, authenticated;
+REVOKE ALL ON TABLE public.workflow_builder_executions FROM anon, authenticated;
+REVOKE ALL ON TABLE public.workflow_builder_logs FROM anon, authenticated;
+REVOKE ALL ON TABLE public.workflow_conversations FROM anon, authenticated;
+REVOKE ALL ON TABLE public.workflow_run_logs FROM anon, authenticated;
+REVOKE ALL ON TABLE public.workflow_runs FROM anon, authenticated;
+REVOKE ALL ON TABLE public.workflow_versions FROM anon, authenticated;
+REVOKE ALL ON TABLE public.workflows FROM anon, authenticated;
+REVOKE ALL ON TABLE public.campaign_stats_summary FROM anon, authenticated;
+
+-- 7 tabelas com SELECT policy: remover INSERT/UPDATE/DELETE
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.account_alerts FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.campaigns FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.contacts FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.flows FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.inbox_conversations FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.inbox_messages FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.templates FROM anon, authenticated;
+
+-- Sequences: revogar de anon/authenticated
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM authenticated;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
+
+-- Default privileges: previne auto-grant em novos objetos
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM authenticated;
+
+-- =============================================================================
 -- REALTIME
 -- Habilita Supabase Realtime para tabelas que precisam de updates em tempo real
 -- =============================================================================
@@ -1335,3 +1938,53 @@ ALTER PUBLICATION supabase_realtime ADD TABLE campaigns;
 ALTER PUBLICATION supabase_realtime ADD TABLE campaign_contacts;
 ALTER PUBLICATION supabase_realtime ADD TABLE inbox_conversations;
 ALTER PUBLICATION supabase_realtime ADD TABLE inbox_messages;
+ALTER PUBLICATION supabase_realtime ADD TABLE contacts;
+ALTER PUBLICATION supabase_realtime ADD TABLE templates;
+ALTER PUBLICATION supabase_realtime ADD TABLE flows;
+ALTER PUBLICATION supabase_realtime ADD TABLE account_alerts;
+ALTER PUBLICATION supabase_realtime ADD TABLE template_project_items;
+ALTER PUBLICATION supabase_realtime ADD TABLE template_projects;
+ALTER PUBLICATION supabase_realtime ADD TABLE flow_submissions;
+
+-- =============================================================================
+-- REPLICA IDENTITY FULL
+-- Permite filtros Realtime por qualquer coluna (não apenas PK)
+-- =============================================================================
+
+ALTER TABLE campaign_contacts REPLICA IDENTITY FULL;
+ALTER TABLE inbox_messages REPLICA IDENTITY FULL;
+ALTER TABLE template_project_items REPLICA IDENTITY FULL;
+ALTER TABLE flow_submissions REPLICA IDENTITY FULL;
+
+-- =============================================================================
+-- GRANTS para role anon (JOINs em Server Actions)
+-- GRANT SELECT satisfaz PostgREST para embedded resources,
+-- mas RLS USING(false) bloqueia leitura direta via REST API.
+-- =============================================================================
+
+GRANT SELECT ON campaign_contacts TO anon;
+GRANT SELECT ON inbox_conversation_labels TO anon;
+GRANT SELECT ON inbox_labels TO anon;
+GRANT SELECT ON ai_agents TO anon;
+GRANT SELECT ON campaign_folders TO anon;
+GRANT SELECT ON campaign_tag_assignments TO anon;
+GRANT SELECT ON campaign_tags TO anon;
+GRANT SELECT ON template_project_items TO anon;
+GRANT SELECT ON template_projects TO anon;
+GRANT SELECT ON flow_submissions TO anon;
+
+-- =============================================================================
+-- RLS Policies para bloquear leitura direta do anon via REST API
+-- O Realtime recebe eventos via WAL (server-side, não passa por RLS)
+-- =============================================================================
+
+CREATE POLICY deny_anon_select ON campaign_contacts FOR SELECT TO anon USING (false);
+CREATE POLICY deny_anon_select ON inbox_conversation_labels FOR SELECT TO anon USING (false);
+CREATE POLICY deny_anon_select ON inbox_labels FOR SELECT TO anon USING (false);
+CREATE POLICY deny_anon_select ON ai_agents FOR SELECT TO anon USING (false);
+CREATE POLICY deny_anon_select ON campaign_folders FOR SELECT TO anon USING (false);
+CREATE POLICY deny_anon_select ON campaign_tag_assignments FOR SELECT TO anon USING (false);
+CREATE POLICY deny_anon_select ON campaign_tags FOR SELECT TO anon USING (false);
+CREATE POLICY deny_anon_select ON template_project_items FOR SELECT TO anon USING (false);
+CREATE POLICY deny_anon_select ON template_projects FOR SELECT TO anon USING (false);
+CREATE POLICY deny_anon_select ON flow_submissions FOR SELECT TO anon USING (false);

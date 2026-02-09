@@ -5,6 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import dns from 'dns';
 import { Client } from 'pg';
 
 const MIGRATIONS_DIR = path.resolve(process.cwd(), 'supabase/migrations');
@@ -30,12 +31,14 @@ async function sleep(ms: number) {
 
 function isRetryableConnectError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
+  const lower = msg.toLowerCase();
   return (
-    msg.includes('ENOTFOUND') ||
-    msg.includes('EAI_AGAIN') ||
-    msg.includes('ECONNREFUSED') ||
-    msg.includes('ETIMEDOUT') ||
-    msg.includes('timeout')
+    lower.includes('tenant or user not found') ||
+    lower.includes('enotfound') ||
+    lower.includes('eai_again') ||
+    lower.includes('econnrefused') ||
+    lower.includes('etimedout') ||
+    lower.includes('timeout')
   );
 }
 
@@ -64,6 +67,10 @@ async function waitForStorageReady(client: Client, opts?: { timeoutMs?: number; 
   throw new Error(
     'Supabase Storage ainda não está pronto (storage.buckets não existe). Aguarde o projeto terminar de provisionar e tente novamente.'
   );
+}
+
+function shouldWaitForStorage(): boolean {
+  return process.env.SMARTZAP_WAIT_STORAGE === 'true';
 }
 
 /**
@@ -165,11 +172,15 @@ export async function runSchemaMigration(dbUrl: string) {
   console.log('[migrations] Conexão estabelecida com sucesso!');
 
   try {
-    // Aguarda storage.buckets existir (igual ao CRM)
-    // O Supabase demora alguns segundos para habilitar storage após criar o projeto
-    console.log('[migrations] Aguardando storage ficar pronto...');
-    await waitForStorageReady(client);
-    console.log('[migrations] Storage pronto, iniciando migrations...');
+    if (shouldWaitForStorage()) {
+      // Aguarda storage.buckets existir (igual ao CRM)
+      // O Supabase demora alguns segundos para habilitar storage após criar o projeto
+      console.log('[migrations] Aguardando storage ficar pronto...');
+      await waitForStorageReady(client);
+      console.log('[migrations] Storage pronto, iniciando migrations...');
+    } else {
+      console.log('[migrations] Storage não é necessário, iniciando migrations...');
+    }
 
     // Executa todos os arquivos de migration em ordem.
     for (const file of migrationFiles) {

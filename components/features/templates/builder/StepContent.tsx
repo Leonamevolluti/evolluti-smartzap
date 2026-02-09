@@ -25,7 +25,10 @@ import {
   Upload,
   CheckCircle2,
   Trash2,
+  MapPin,
+  ExternalLink,
 } from 'lucide-react'
+import { VIDEO_CONVERTER_URL } from '@/lib/video-codec-validator'
 import {
   Select,
   SelectContent,
@@ -121,6 +124,8 @@ export interface StepContentProps {
   namedVarError: string | null
   setNamedVarError: React.Dispatch<React.SetStateAction<string | null>>
   confirmNamedVariable: () => void
+  // Meta App ID (necessário para upload de mídia)
+  hasMetaAppId?: boolean
 }
 
 export function StepContent({
@@ -188,6 +193,7 @@ export function StepContent({
   namedVarError,
   setNamedVarError,
   confirmNamedVariable,
+  hasMetaAppId = true,
 }: StepContentProps) {
   return (
     <>
@@ -281,7 +287,7 @@ export function StepContent({
                       return
                     }
                     if (format === 'TEXT') updateHeader({ format: 'TEXT', text: '', example: null })
-                    else if (format === 'LOCATION') updateHeader({ format: 'LOCATION' })
+                    else if (format === 'LOCATION') updateHeader({ format: 'LOCATION', location: { latitude: '', longitude: '', name: '', address: '' } })
                     else updateHeader({ format, example: { header_handle: [''] } })
                   }}
                 >
@@ -291,22 +297,16 @@ export function StepContent({
                   <SelectContent>
                     <SelectItem value="NONE">Nenhum</SelectItem>
                     <SelectItem value="TEXT" disabled={isLimitedTimeOffer}>Texto</SelectItem>
-                    <SelectItem value="IMAGE">Imagem</SelectItem>
-                    <SelectItem value="VIDEO">Video</SelectItem>
-                    <SelectItem value="GIF" disabled={!isMarketingCategory || isLimitedTimeOffer}>GIF (mp4)</SelectItem>
-                    <SelectItem value="DOCUMENT" disabled={isLimitedTimeOffer}>Documento</SelectItem>
-                    <SelectItem value="LOCATION" disabled={isLimitedTimeOffer}>Localizacao</SelectItem>
+                    <SelectItem value="IMAGE" disabled={!hasMetaAppId}>Imagem {!hasMetaAppId && '🔒'}</SelectItem>
+                    <SelectItem value="VIDEO" disabled={!hasMetaAppId}>Vídeo {!hasMetaAppId && '🔒'}</SelectItem>
+                    <SelectItem value="DOCUMENT" disabled={!hasMetaAppId || isLimitedTimeOffer}>Documento {!hasMetaAppId && '🔒'}</SelectItem>
+                    <SelectItem value="LOCATION" disabled={isLimitedTimeOffer}>Localização</SelectItem>
                   </SelectContent>
                 </Select>
 
-                {headerType === 'GIF' ? (
-                  <p className="text-xs text-[var(--ds-text-muted)]">
-                    Observacao: GIF no header e documentado como disponivel para Marketing Messages (GIF = mp4, max 3.5MB).
-                  </p>
-                ) : null}
-                {!isMarketingCategory ? (
-                  <p className="text-xs text-[var(--ds-text-muted)]">
-                    Dica: a opcao GIF fica disponivel apenas em templates MARKETING.
+                {!hasMetaAppId ? (
+                  <p className="text-xs text-amber-400/80">
+                    🔒 Opções de mídia requerem o <span className="font-medium">ID do Aplicativo</span>. Configure em Configurações → API.
                   </p>
                 ) : null}
               </div>
@@ -378,6 +378,197 @@ export function StepContent({
                   <Plus className="w-4 h-4" />
                   Adicionar variavel
                 </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {headerType === 'LOCATION' ? (
+            <div className="mt-2 space-y-3">
+              <div className="p-4 rounded-xl border border-blue-500/30 bg-blue-500/5">
+                <div className="flex items-start gap-3 mb-4">
+                  <div className="p-2 rounded-lg bg-blue-500/20">
+                    <MapPin className="w-4 h-4 text-blue-400" />
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="text-sm font-medium text-[var(--ds-text-primary)]">Localização do cabeçalho</h4>
+                    <p className="text-xs text-[var(--ds-text-secondary)] mt-1">
+                      Cole uma URL do Google Maps ou preencha manualmente.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {/* Google Maps URL input */}
+                  <div>
+                    <label className="text-xs text-[var(--ds-text-muted)] mb-1 block">URL do Google Maps</label>
+                    <Input
+                      type="text"
+                      placeholder="Cole aqui a URL do Google Maps..."
+                      className="bg-[var(--ds-bg-elevated)] border-[var(--ds-border-default)] text-[var(--ds-text-primary)]"
+                      onChange={(e) => {
+                        const url = e.target.value
+                        if (!url.includes('google.com/maps')) return
+
+                        // Extract coordinates from URL
+                        // Format 1: @-22.9481617,-43.1576136 (view coordinates)
+                        // Format 2: !3d-22.9492586!4d-43.1545757 (pin coordinates - more precise)
+                        let lat = ''
+                        let lng = ''
+
+                        // Try to get precise pin coordinates first (!3d and !4d)
+                        const pinMatch = url.match(/!3d(-?\d+\.?\d*)!4d(-?\d+\.?\d*)/)
+                        if (pinMatch) {
+                          lat = pinMatch[1]
+                          lng = pinMatch[2]
+                        } else {
+                          // Fallback to @ coordinates
+                          const atMatch = url.match(/@(-?\d+\.?\d*),(-?\d+\.?\d*)/)
+                          if (atMatch) {
+                            lat = atMatch[1]
+                            lng = atMatch[2]
+                          }
+                        }
+
+                        // Extract place name from URL path
+                        const placeMatch = url.match(/\/place\/([^/@]+)/)
+                        let name = ''
+                        if (placeMatch) {
+                          try {
+                            name = decodeURIComponent(placeMatch[1].replace(/\+/g, ' '))
+                          } catch {
+                            name = placeMatch[1].replace(/\+/g, ' ')
+                          }
+                        }
+
+                        if (lat && lng) {
+                          updateHeader({
+                            ...header,
+                            format: 'LOCATION',
+                            location: {
+                              latitude: lat,
+                              longitude: lng,
+                              name: name || (header as any)?.location?.name || '',
+                              address: (header as any)?.location?.address || '',
+                            },
+                          })
+                          // Clear the input after extraction
+                          e.target.value = ''
+                        }
+                      }}
+                    />
+                    <p className="text-[10px] text-[var(--ds-text-muted)] mt-1">
+                      Abra o Google Maps, clique no local e copie a URL da barra de endereço
+                    </p>
+                  </div>
+
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-[var(--ds-border-default)]" />
+                    </div>
+                    <div className="relative flex justify-center">
+                      <span className="bg-blue-500/5 px-2 text-[10px] text-[var(--ds-text-muted)]">ou preencha manualmente</span>
+                    </div>
+                  </div>
+                  {/* Latitude & Longitude */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-[var(--ds-text-muted)] mb-1 block">Latitude *</label>
+                      <Input
+                        type="text"
+                        value={(header as any)?.location?.latitude || ''}
+                        onChange={(e) => {
+                          updateHeader({
+                            ...header,
+                            format: 'LOCATION',
+                            location: {
+                              latitude: e.target.value,
+                              longitude: (header as any)?.location?.longitude || '',
+                              name: (header as any)?.location?.name || '',
+                              address: (header as any)?.location?.address || '',
+                            },
+                          })
+                        }}
+                        placeholder="Ex: -23.5505"
+                        className="bg-[var(--ds-bg-elevated)] border-[var(--ds-border-default)] text-[var(--ds-text-primary)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-[var(--ds-text-muted)] mb-1 block">Longitude *</label>
+                      <Input
+                        type="text"
+                        value={(header as any)?.location?.longitude || ''}
+                        onChange={(e) => {
+                          updateHeader({
+                            ...header,
+                            format: 'LOCATION',
+                            location: {
+                              latitude: (header as any)?.location?.latitude || '',
+                              longitude: e.target.value,
+                              name: (header as any)?.location?.name || '',
+                              address: (header as any)?.location?.address || '',
+                            },
+                          })
+                        }}
+                        placeholder="Ex: -46.6333"
+                        className="bg-[var(--ds-bg-elevated)] border-[var(--ds-border-default)] text-[var(--ds-text-primary)]"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Name */}
+                  <div>
+                    <label className="text-xs text-[var(--ds-text-muted)] mb-1 block">Nome do Local</label>
+                    <Input
+                      type="text"
+                      value={(header as any)?.location?.name || ''}
+                      onChange={(e) => {
+                        updateHeader({
+                          ...header,
+                          format: 'LOCATION',
+                          location: {
+                            latitude: (header as any)?.location?.latitude || '',
+                            longitude: (header as any)?.location?.longitude || '',
+                            name: e.target.value,
+                            address: (header as any)?.location?.address || '',
+                          },
+                        })
+                      }}
+                      placeholder="Ex: Loja Centro"
+                      className="bg-[var(--ds-bg-elevated)] border-[var(--ds-border-default)] text-[var(--ds-text-primary)]"
+                    />
+                  </div>
+
+                  {/* Address */}
+                  <div>
+                    <label className="text-xs text-[var(--ds-text-muted)] mb-1 block">Endereço</label>
+                    <Input
+                      type="text"
+                      value={(header as any)?.location?.address || ''}
+                      onChange={(e) => {
+                        updateHeader({
+                          ...header,
+                          format: 'LOCATION',
+                          location: {
+                            latitude: (header as any)?.location?.latitude || '',
+                            longitude: (header as any)?.location?.longitude || '',
+                            name: (header as any)?.location?.name || '',
+                            address: e.target.value,
+                          },
+                        })
+                      }}
+                      placeholder="Preencha manualmente (não disponível na URL)"
+                      className="bg-[var(--ds-bg-elevated)] border-[var(--ds-border-default)] text-[var(--ds-text-primary)]"
+                    />
+                  </div>
+
+                  {/* Validation hint */}
+                  {(!(header as any)?.location?.latitude || !(header as any)?.location?.longitude) && (
+                    <p className="text-xs text-amber-400 flex items-center gap-1.5">
+                      <span className="w-1 h-1 rounded-full bg-amber-400" />
+                      Latitude e Longitude são obrigatórios para enviar o template
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           ) : null}
@@ -488,11 +679,42 @@ export function StepContent({
                 </div>
               </div>
 
-              {uploadHeaderMediaError ? (
-                <p className="text-xs text-amber-700 dark:text-amber-300">{uploadHeaderMediaError}</p>
-              ) : null}
+              {/* Aviso de limite de tamanho */}
+              <p className="text-xs text-[var(--ds-text-muted)]">
+                {headerType === 'VIDEO' && (
+                  <>Máximo: <span className="font-medium text-amber-400/80">4.5MB</span> (limite da plataforma). Formato: MP4 (H.264 + AAC).</>
+                )}
+                {headerType === 'IMAGE' && (
+                  <>Máximo: <span className="font-medium">5MB</span>. Formatos: PNG, JPEG.</>
+                )}
+                {headerType === 'DOCUMENT' && (
+                  <>Máximo: <span className="font-medium text-amber-400/80">4.5MB</span> (limite da plataforma). Formato: PDF.</>
+                )}
+                {headerType === 'GIF' && (
+                  <>Máximo: <span className="font-medium">3.5MB</span>. Formato: MP4 (como GIF animado).</>
+                )}
+              </p>
 
-              {isHeaderMediaHandleMissing ? (
+              {uploadHeaderMediaError ? (
+                <div className="text-xs text-amber-700 dark:text-amber-300 space-y-1">
+                  <p>{uploadHeaderMediaError}</p>
+                  {/* Mostrar link do conversor se for erro de codec */}
+                  {(uploadHeaderMediaError.includes('formato') ||
+                    uploadHeaderMediaError.includes('H.264') ||
+                    uploadHeaderMediaError.includes('AAC') ||
+                    uploadHeaderMediaError.includes('incompatível')) && (
+                    <a
+                      href={VIDEO_CONVERTER_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-primary-400 hover:text-primary-300 underline"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Converter vídeo online (CloudConvert)
+                    </a>
+                  )}
+                </div>
+              ) : isHeaderMediaHandleMissing ? (
                 <p className="text-xs text-amber-700 dark:text-amber-300">
                   {headerMediaPreview ? 'Finalize o envio da midia para continuar.' : 'Selecione um arquivo para o cabecalho.'}
                 </p>

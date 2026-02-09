@@ -1,21 +1,13 @@
 export type MetaComponentType = 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS' | 'CAROUSEL' | 'LIMITED_TIME_OFFER';
 export type MetaHeaderFormat = 'TEXT' | 'IMAGE' | 'VIDEO' | 'GIF' | 'DOCUMENT' | 'LOCATION';
+// Tipos de botão suportados pela Meta API para templates de mensagem.
 export type MetaButtonType =
   | 'QUICK_REPLY'
   | 'URL'
   | 'PHONE_NUMBER'
   | 'OTP'
   | 'COPY_CODE'
-  | 'FLOW'
-  | 'CATALOG'
-  | 'MPM'
-  | 'VOICE_CALL'
-  | 'EXTENSION'
-  | 'ORDER_DETAILS'
-  | 'POSTBACK'
-  | 'REMINDER'
-  | 'SEND_LOCATION'
-  | 'SPM';
+  | 'FLOW';
 
 export interface MetaExample {
   header_text?: string[];
@@ -261,16 +253,7 @@ export interface CreateTemplateInput {
       | 'PHONE_NUMBER'
       | 'COPY_CODE'
       | 'OTP'
-      | 'FLOW'
-      | 'CATALOG'
-      | 'MPM'
-      | 'VOICE_CALL'
-      | 'EXTENSION'
-      | 'ORDER_DETAILS'
-      | 'POSTBACK'
-      | 'REMINDER'
-      | 'SEND_LOCATION'
-      | 'SPM';
+      | 'FLOW';
     text?: string;
     url?: string;
     phone_number?: string;

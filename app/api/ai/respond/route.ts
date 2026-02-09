@@ -13,9 +13,10 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { inboxDb } from '@/lib/inbox/inbox-db'
-import { processChatAgent } from '@/lib/ai/agents/chat-agent'
-import { sendWhatsAppMessage } from '@/lib/whatsapp-send'
+import { processChatAgent, type ContactContext } from '@/lib/ai/agents/chat-agent'
+import { sendWhatsAppMessage, sendTypingIndicator } from '@/lib/whatsapp-send'
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { redis } from '@/lib/redis'
 import type { AIAgent } from '@/types'
 
 // Fluid Compute: 5 minutos de timeout (suficiente para IA)
@@ -30,6 +31,10 @@ export const dynamic = 'force-dynamic'
 
 interface AIRespondRequest {
   conversationId: string
+  /** Tempo de debounce configurado no agente (para verificação de "parou de digitar") */
+  debounceMs?: number
+  /** ID da mensagem WhatsApp que disparou o processamento (para deduplicação) */
+  messageId?: string
 }
 
 // =============================================================================
@@ -45,14 +50,60 @@ export async function POST(req: NextRequest) {
   try {
     // 1. Parse request
     const body = (await req.json()) as AIRespondRequest
-    const { conversationId } = body
+    const { conversationId, debounceMs, messageId } = body
 
     if (!conversationId) {
       console.log(`❌ [AI-RESPOND] Missing conversationId`)
       return NextResponse.json({ error: 'Missing conversationId' }, { status: 400 })
     }
 
-    console.log(`🤖 [AI-RESPOND] Processing conversation: ${conversationId}`)
+    console.log(`🤖 [AI-RESPOND] Processing conversation: ${conversationId}, debounceMs: ${debounceMs}, messageId: ${messageId}`)
+
+    // 1.2. DEDUPLICAÇÃO: Verifica se essa mensagem já foi processada
+    // Última linha de defesa contra duplicatas (QStash retry, race conditions, etc.)
+    if (messageId && redis) {
+      const dedupKey = `ai:processed:${messageId}`
+      const alreadyProcessed = await redis.get(dedupKey)
+
+      if (alreadyProcessed) {
+        console.log(`⏭️ [AI-RESPOND] Duplicate detected - message ${messageId} already processed at ${alreadyProcessed}`)
+        return NextResponse.json({
+          success: true,
+          deduplicated: true,
+          messageId,
+          reason: 'already-processed',
+        })
+      }
+
+      // Marca como "processando" ANTES de iniciar (evita race condition)
+      // TTL de 30 minutos - tempo suficiente para qualquer processamento
+      await redis.setex(dedupKey, 1800, new Date().toISOString())
+      console.log(`🔒 [AI-RESPOND] Dedup lock acquired for message ${messageId}`)
+    }
+
+    // 1.5. Verificação de debounce - usuário parou de digitar?
+    // Verifica se passou tempo suficiente desde a ÚLTIMA MENSAGEM
+    if (debounceMs && debounceMs > 0 && redis) {
+      const redisKey = `ai:lastmsg:${conversationId}`
+      const lastMsgTimestamp = await redis.get<number>(redisKey)
+
+      if (lastMsgTimestamp) {
+        const now = Date.now()
+        const timeSinceLastMsg = now - lastMsgTimestamp
+
+        // Se não passou tempo suficiente, usuário ainda está digitando
+        // Outro job (mais recente) vai processar
+        if (timeSinceLastMsg < debounceMs) {
+          console.log(`⏭️ [AI-RESPOND] Skipping - user still typing (${timeSinceLastMsg}ms < ${debounceMs}ms)`)
+          return NextResponse.json({ skipped: true, reason: 'user-still-typing' })
+        }
+
+        // Passou tempo suficiente - usuário parou de digitar
+        // Limpa a chave e processa
+        await redis.del(redisKey)
+        console.log(`🤖 [AI-RESPOND] User stopped typing (${timeSinceLastMsg}ms >= ${debounceMs}ms) - processing`)
+      }
+    }
 
     // 2. Busca conversa
     const conversation = await inboxDb.getConversation(conversationId)
@@ -101,13 +152,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ skipped: true, reason: 'no-messages' })
     }
 
-    // 7. Processa com IA
+    // 7. Busca dados do contato (se existir)
+    let contactData: ContactContext | undefined
+    if (conversation.contact_id) {
+      contactData = await getContactData(conversation.contact_id)
+      if (contactData) {
+        console.log(`🤖 [AI-RESPOND] Contact data loaded: ${contactData.name || 'unnamed'}`)
+      }
+    }
+
+    // 8. Processa com IA
     console.log(`🚀 [AI-RESPOND] Calling processChatAgent...`)
 
     const result = await processChatAgent({
       agent,
       conversation,
       messages,
+      contactData,
     })
 
     console.log(`✅ [AI-RESPOND] AI result: success=${result.success}, latency=${result.latencyMs}ms`)
@@ -126,33 +187,82 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // 9. Envia resposta via WhatsApp
+    // 9. Envia resposta via WhatsApp (com split por parágrafos)
     console.log(`📤 [AI-RESPOND] Sending WhatsApp message to ${conversation.phone}...`)
 
-    const sendResult = await sendWhatsAppMessage({
-      to: conversation.phone,
-      type: 'text',
-      text: result.response.message,
-    })
+    // Busca o whatsapp_message_id da ÚLTIMA mensagem inbound para typing indicator e quote
+    // IMPORTANTE: usar findLast() para pegar a mais recente, não a primeira
+    const lastInboundMessage = messages.findLast(m => m.direction === 'inbound' && m.whatsapp_message_id)
+    const typingMessageId = lastInboundMessage?.whatsapp_message_id
 
-    if (sendResult.success && sendResult.messageId) {
-      // Salva mensagem no banco
-      await inboxDb.createMessage({
-        conversation_id: conversationId,
-        direction: 'outbound',
-        content: result.response.message,
-        message_type: 'text',
-        whatsapp_message_id: sendResult.messageId,
-        delivery_status: 'sent',
-        ai_response_id: result.logId || null,
-        ai_sentiment: result.response.sentiment,
-        ai_sources: result.response.sources || null,
+    if (typingMessageId) {
+      console.log(`⌨️ [AI-RESPOND] Will use typing indicator with message_id: ${typingMessageId}`)
+    } else {
+      console.log(`⚠️ [AI-RESPOND] No inbound message_id found, typing indicator disabled`)
+    }
+
+    // Split por \n\n (igual Evolution API) - cada parágrafo vira uma mensagem
+    const messageParts = splitMessageByParagraphs(result.response.message)
+    console.log(`📤 [AI-RESPOND] Message split into ${messageParts.length} parts`)
+
+    const messageIds: string[] = []
+
+    for (let i = 0; i < messageParts.length; i++) {
+      const part = messageParts[i]
+
+      // Envia typing indicator antes de cada parte (se tiver message_id)
+      if (typingMessageId) {
+        await sendTypingIndicator({ messageId: typingMessageId })
+        console.log(`⌨️ [AI-RESPOND] Typing indicator sent for part ${i + 1}`)
+      }
+
+      // Delay proporcional ao tamanho da mensagem (simula digitação)
+      // 10ms por caractere, mínimo 800ms, máximo 2s
+      const typingDelay = Math.min(Math.max(part.length * 10, 800), 2000)
+      await new Promise(r => setTimeout(r, typingDelay))
+
+      // Se shouldQuoteUserMessage e é a primeira parte, envia como reply
+      const shouldQuote = i === 0 && result.response.shouldQuoteUserMessage && typingMessageId
+
+      const sendResult = await sendWhatsAppMessage({
+        to: conversation.phone,
+        type: 'text',
+        text: part,
+        replyToMessageId: shouldQuote ? typingMessageId : undefined,
       })
 
-      console.log(`✅ [AI-RESPOND] Message sent and saved: ${sendResult.messageId}`)
-    } else {
-      console.error(`❌ [AI-RESPOND] Failed to send WhatsApp message:`, sendResult.error)
+      if (shouldQuote) {
+        console.log(`💬 [AI-RESPOND] First message sent as reply to user message`)
+      }
+
+      if (sendResult.success && sendResult.messageId) {
+        messageIds.push(sendResult.messageId)
+
+        // Salva cada parte no banco
+        await inboxDb.createMessage({
+          conversation_id: conversationId,
+          direction: 'outbound',
+          content: part,
+          message_type: 'text',
+          whatsapp_message_id: sendResult.messageId,
+          delivery_status: 'sent',
+          ai_response_id: i === 0 ? result.logId || null : null, // Só a primeira tem o logId
+          ai_sentiment: i === messageParts.length - 1 ? result.response.sentiment : null, // Só a última tem sentiment
+          ai_sources: i === messageParts.length - 1 ? result.response.sources || null : null,
+        })
+
+        console.log(`✅ [AI-RESPOND] Part ${i + 1}/${messageParts.length} sent: ${sendResult.messageId}`)
+
+        // Pausa entre mensagens para o typing da próxima ser mais visível
+        if (i < messageParts.length - 1) {
+          await new Promise(r => setTimeout(r, 500)) // 500ms de "respiro"
+        }
+      } else {
+        console.error(`❌ [AI-RESPOND] Failed to send part ${i + 1}:`, sendResult.error)
+      }
     }
+
+    console.log(`✅ [AI-RESPOND] All ${messageIds.length} messages sent`)
 
     // 10. Handoff se necessário
     if (result.response.shouldHandoff) {
@@ -210,6 +320,28 @@ export async function POST(req: NextRequest) {
 // =============================================================================
 // Helper Functions
 // =============================================================================
+
+/**
+ * Busca dados do contato para injetar no contexto da IA
+ */
+async function getContactData(contactId: string): Promise<ContactContext | undefined> {
+  const supabase = getSupabaseAdmin()
+  if (!supabase) return undefined
+
+  const { data, error } = await supabase
+    .from('contacts')
+    .select('name, email, created_at')
+    .eq('id', contactId)
+    .single()
+
+  if (error || !data) return undefined
+
+  return {
+    name: data.name || undefined,
+    email: data.email || undefined,
+    created_at: data.created_at || undefined,
+  }
+}
 
 /**
  * Busca o agente de IA para uma conversa
@@ -279,4 +411,15 @@ async function handleAutoHandoff(
     message_type: 'internal_note',
     delivery_status: 'delivered',
   })
+}
+
+/**
+ * Divide mensagem por parágrafos (double line breaks)
+ * Igual ao Evolution API - cada parágrafo vira uma mensagem separada
+ */
+function splitMessageByParagraphs(message: string): string[] {
+  return message
+    .split('\n\n')
+    .map(part => part.trim())
+    .filter(part => part.length > 0)
 }

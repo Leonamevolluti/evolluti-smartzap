@@ -9,8 +9,8 @@ import { z } from 'zod'
 
 const INBOX_RETENTION_KEY = 'inbox_retention_days'
 const HUMAN_MODE_TIMEOUT_KEY = 'inbox_human_mode_timeout_hours'
-const DEFAULT_RETENTION_DAYS = 90
-const DEFAULT_HUMAN_MODE_TIMEOUT_HOURS = 24
+const DEFAULT_RETENTION_DAYS = 365
+const DEFAULT_HUMAN_MODE_TIMEOUT_HOURS = 0 // 0 = nunca expira (padrão recomendado)
 
 const InboxSettingsSchema = z.object({
   retention_days: z.number().int().min(7).max(365).optional(),

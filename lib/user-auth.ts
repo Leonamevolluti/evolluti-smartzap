@@ -351,8 +351,19 @@ async function hashPasswordForLogin(password: string): Promise<string> {
 }
 
 /**
+ * Verifica se uma string parece ser um hash SHA-256 (64 caracteres hexadecimais)
+ */
+function isHashFormat(value: string): boolean {
+  return value.length === 64 && /^[a-f0-9]+$/i.test(value)
+}
+
+/**
  * Attempt login with password
- * Validates against MASTER_PASSWORD env var (stored as hash)
+ * Validates against MASTER_PASSWORD env var
+ *
+ * Aceita dois formatos de MASTER_PASSWORD:
+ * - Hash SHA-256 (64 chars hex): compara com hash da senha digitada (retrocompatível)
+ * - Texto puro: compara diretamente (mais simples para reset)
  */
 export async function loginUser(password: string): Promise<UserAuthResult> {
   if (!password) {
@@ -372,9 +383,18 @@ export async function loginUser(password: string): Promise<UserAuthResult> {
   }
 
   try {
-    // Hash the password before comparing (MASTER_PASSWORD is stored as hash)
-    const passwordHash = await hashPasswordForLogin(password);
-    const isValid = passwordHash === masterPassword
+    // Detecta automaticamente se MASTER_PASSWORD é hash ou texto puro
+    const masterIsHash = isHashFormat(masterPassword)
+
+    let isValid: boolean
+    if (masterIsHash) {
+      // Comportamento original: MASTER_PASSWORD é hash, compara com hash da senha digitada
+      const passwordHash = await hashPasswordForLogin(password)
+      isValid = passwordHash === masterPassword
+    } else {
+      // Novo: MASTER_PASSWORD é texto puro, compara diretamente
+      isValid = password === masterPassword
+    }
 
     if (!isValid) {
       await recordFailedAttempt()
@@ -565,7 +585,11 @@ async function recordFailedAttempt(): Promise<void> {
 }
 
 async function clearFailedAttempts(): Promise<void> {
-  await deleteSetting('login_attempts')
+  try {
+    await deleteSetting('login_attempts')
+  } catch (error) {
+    console.warn('[auth] Falha ao limpar login_attempts (best-effort):', error)
+  }
 }
 
 // ============================================================================
@@ -574,9 +598,15 @@ async function clearFailedAttempts(): Promise<void> {
 
 /**
  * Password is managed via MASTER_PASSWORD environment variable in Vercel.
- * To change the password:
- * 1. Go to Vercel Dashboard
- * 2. Project Settings > Environment Variables
- * 3. Update MASTER_PASSWORD
- * 4. Redeploy
+ *
+ * ACEITA DOIS FORMATOS:
+ * - Texto puro: "minhaSenha123" (recomendado - mais simples)
+ * - Hash SHA-256: 64 caracteres hex (retrocompatível com instalações antigas)
+ *
+ * COMO RESETAR A SENHA:
+ * 1. Vá em Vercel Dashboard → Settings → Environment Variables
+ * 2. Edite MASTER_PASSWORD e coloque sua nova senha (ex: "novaSenha456")
+ * 3. Clique em Save
+ * 4. Vá em Deployments → clique nos 3 pontos do último deploy → Redeploy
+ * 5. Pronto! Faça login com a nova senha
  */

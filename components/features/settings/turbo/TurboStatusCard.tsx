@@ -37,29 +37,28 @@ export function TurboStatusCard({
   source,
 }: TurboStatusCardProps) {
   return (
-    <div className="bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] rounded-xl p-4">
-      <div className="text-xs text-[var(--ds-text-muted)]">Status</div>
+    <div className="bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] rounded-xl p-4 flex flex-col">
+      <div className="text-xs text-[var(--ds-text-muted)] mb-2">Status</div>
       {loading ? (
-        <div className="mt-2 text-sm text-[var(--ds-text-secondary)] flex items-center gap-2">
+        <div className="text-sm text-[var(--ds-text-secondary)] flex items-center gap-2">
           <Loader2 size={14} className="animate-spin" /> Carregando...
         </div>
       ) : (
-        <div className="mt-2">
-          <div className="text-sm text-[var(--ds-text-primary)]">
+        <div className="flex-1 flex flex-col justify-center">
+          <div className="text-lg font-semibold text-[var(--ds-text-primary)]">
             {config?.enabled ? (
-              <span className="text-emerald-300 font-medium">Ativo</span>
+              <span className="text-emerald-400">Ativo</span>
             ) : (
-              <span className="text-[var(--ds-text-secondary)] font-medium">Inativo</span>
+              <span className="text-[var(--ds-text-secondary)]">Inativo</span>
             )}
-            <span className="text-[var(--ds-text-muted)]"> . </span>
-            <span className="text-xs text-[var(--ds-text-secondary)]">fonte: {source || '-'}</span>
+            <span className="text-xs font-normal text-[var(--ds-text-muted)] ml-2">fonte: {source || '-'}</span>
           </div>
-          <div className="mt-2 text-xs text-[var(--ds-text-secondary)]">
-            Target atual: <span className="font-mono text-[var(--ds-text-primary)]">{typeof state?.targetMps === 'number' ? state.targetMps : '-'}</span> mps
+          <div className="mt-1 text-sm text-[var(--ds-text-secondary)]">
+            Target: <span className="font-mono font-medium text-[var(--ds-text-primary)]">{typeof state?.targetMps === 'number' ? state.targetMps : '-'}</span> mps
           </div>
           {state?.cooldownUntil && (
-            <div className="mt-1 text-xs text-amber-300">
-              Cooldown ate: <span className="font-mono">{new Date(state.cooldownUntil).toLocaleString('pt-BR')}</span>
+            <div className="mt-1 text-xs text-amber-400">
+              Cooldown até: <span className="font-mono">{new Date(state.cooldownUntil).toLocaleString('pt-BR')}</span>
             </div>
           )}
         </div>

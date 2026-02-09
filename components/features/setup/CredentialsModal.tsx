@@ -1,100 +1,116 @@
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { Eye, EyeOff, Loader2, CheckCircle2, XCircle, HelpCircle } from 'lucide-react';
+import { useState, useCallback } from 'react'
+import { Loader2, CheckCircle2 } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-
-interface Credentials {
-  phoneNumberId: string;
-  businessAccountId: string;
-  accessToken: string;
-}
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { WhatsAppCredentialsForm, type WhatsAppCredentials } from '@/components/shared/WhatsAppCredentialsForm'
 
 interface CredentialsModalProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSuccess: () => void;
-  onHelpClick: () => void;
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSuccess: () => void
+  onHelpClick: () => void
 }
 
-type TestStatus = 'idle' | 'testing' | 'success' | 'error';
+type TestStatus = 'idle' | 'testing' | 'success' | 'error'
 
+/**
+ * Modal de credenciais para setup rápido.
+ *
+ * Usa o componente centralizado WhatsAppCredentialsForm em modo minimal:
+ * - Apenas campos essenciais (Phone, WABA, Token)
+ * - Sem Meta App ID/Secret
+ * - Sem validação de permissões
+ * - Salva e fecha automaticamente após sucesso
+ */
 export function CredentialsModal({
   open,
   onOpenChange,
   onSuccess,
   onHelpClick,
 }: CredentialsModalProps) {
-  const [credentials, setCredentials] = useState<Credentials>({
+  const [credentials, setCredentials] = useState<WhatsAppCredentials>({
     phoneNumberId: '',
     businessAccountId: '',
     accessToken: '',
-  });
-  const [showToken, setShowToken] = useState(false);
-  const [testStatus, setTestStatus] = useState<TestStatus>('idle');
-  const [errorMessage, setErrorMessage] = useState('');
+  })
+  const [testStatus, setTestStatus] = useState<TestStatus>('idle')
+  const [errorMessage, setErrorMessage] = useState('')
 
   const isFormValid =
     credentials.phoneNumberId.trim() &&
     credentials.businessAccountId.trim() &&
-    credentials.accessToken.trim();
+    credentials.accessToken.trim()
 
-  const handleTest = async () => {
-    if (!isFormValid) return;
+  // Handler para mudança de valores
+  const handleChange = useCallback((values: WhatsAppCredentials) => {
+    setCredentials(values)
+    // Limpa erro quando o usuário edita
+    if (testStatus === 'error') {
+      setTestStatus('idle')
+      setErrorMessage('')
+    }
+  }, [testStatus])
 
-    setTestStatus('testing');
-    setErrorMessage('');
+  // Handler para testar e salvar
+  const handleTestAndSave = async () => {
+    if (!isFormValid) return
+
+    setTestStatus('testing')
+    setErrorMessage('')
 
     try {
       // API /api/settings/credentials faz teste + save em uma única chamada
       const res = await fetch('/api/settings/credentials', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(credentials),
-      });
+        body: JSON.stringify({
+          phoneNumberId: credentials.phoneNumberId.trim(),
+          businessAccountId: credentials.businessAccountId.trim(),
+          accessToken: credentials.accessToken.trim(),
+        }),
+      })
 
-      const data = await res.json();
+      const data = await res.json()
 
       if (!res.ok) {
-        throw new Error(data.details || data.error || 'Credenciais inválidas');
+        throw new Error(data.details || data.error || 'Credenciais inválidas')
       }
 
       // Sincronizar templates automaticamente (fire-and-forget)
       fetch('/api/templates/sync', { method: 'POST' }).catch(() => {
         // Ignora erro - não é crítico
-      });
+      })
 
-      setTestStatus('success');
+      setTestStatus('success')
 
       // Fechar modal após breve delay para mostrar sucesso
       setTimeout(() => {
-        onOpenChange(false);
-        onSuccess();
+        onOpenChange(false)
+        onSuccess()
         // Reset state
-        setTestStatus('idle');
-        setCredentials({ phoneNumberId: '', businessAccountId: '', accessToken: '' });
-      }, 1000);
+        setTestStatus('idle')
+        setCredentials({ phoneNumberId: '', businessAccountId: '', accessToken: '' })
+      }, 1000)
     } catch (error) {
-      setTestStatus('error');
-      setErrorMessage(error instanceof Error ? error.message : 'Erro desconhecido');
+      setTestStatus('error')
+      setErrorMessage(error instanceof Error ? error.message : 'Erro desconhecido')
     }
-  };
+  }
 
   const handleClose = () => {
-    if (testStatus === 'testing') return; // Não fecha durante teste
-    onOpenChange(false);
-    setTestStatus('idle');
-    setErrorMessage('');
-  };
+    if (testStatus === 'testing') return // Não fecha durante teste
+    onOpenChange(false)
+    setTestStatus('idle')
+    setErrorMessage('')
+  }
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -114,59 +130,18 @@ export function CredentialsModal({
         </DialogHeader>
 
         <div className="space-y-4 mt-4">
-          {/* Phone Number ID */}
-          <div className="space-y-2">
-            <Label htmlFor="phoneNumberId">Phone Number ID</Label>
-            <Input
-              id="phoneNumberId"
-              placeholder="Ex: 123456789012345"
-              value={credentials.phoneNumberId}
-              onChange={(e) =>
-                setCredentials((prev) => ({ ...prev, phoneNumberId: e.target.value }))
-              }
-              disabled={testStatus === 'testing'}
-            />
-          </div>
-
-          {/* Business Account ID */}
-          <div className="space-y-2">
-            <Label htmlFor="businessAccountId">Business Account ID</Label>
-            <Input
-              id="businessAccountId"
-              placeholder="Ex: 123456789012345"
-              value={credentials.businessAccountId}
-              onChange={(e) =>
-                setCredentials((prev) => ({ ...prev, businessAccountId: e.target.value }))
-              }
-              disabled={testStatus === 'testing'}
-            />
-          </div>
-
-          {/* Access Token */}
-          <div className="space-y-2">
-            <Label htmlFor="accessToken">Access Token</Label>
-            <div className="relative">
-              <Input
-                id="accessToken"
-                type={showToken ? 'text' : 'password'}
-                placeholder="Cole seu token de acesso"
-                value={credentials.accessToken}
-                onChange={(e) =>
-                  setCredentials((prev) => ({ ...prev, accessToken: e.target.value }))
-                }
-                disabled={testStatus === 'testing'}
-                className="pr-10"
-              />
-              <button
-                type="button"
-                onClick={() => setShowToken(!showToken)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
-                tabIndex={-1}
-              >
-                {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
+          {/* Formulário centralizado - modo minimal */}
+          <WhatsAppCredentialsForm
+            values={credentials}
+            onChange={handleChange}
+            showMetaApp={false}
+            showAppSecret={false}
+            showValidateButton={false}
+            showSaveButton={false}
+            showTestButton={false}
+            showHelpLink={false}
+            variant="minimal"
+          />
 
           {/* Help Link */}
           <button
@@ -174,14 +149,12 @@ export function CredentialsModal({
             onClick={onHelpClick}
             className="flex items-center gap-2 text-sm text-zinc-400 hover:text-emerald-400 transition-colors w-full justify-center py-2"
           >
-            <HelpCircle className="w-4 h-4" />
             Não sabe onde encontrar? Ver tutorial passo-a-passo
           </button>
 
           {/* Error Message */}
           {testStatus === 'error' && errorMessage && (
             <div className="flex items-start gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-              <XCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
               <p className="text-sm text-red-200">{errorMessage}</p>
             </div>
           )}
@@ -206,7 +179,7 @@ export function CredentialsModal({
               Cancelar
             </Button>
             <Button
-              onClick={handleTest}
+              onClick={handleTestAndSave}
               disabled={!isFormValid || testStatus === 'testing' || testStatus === 'success'}
               className="min-w-[140px]"
             >
@@ -228,5 +201,5 @@ export function CredentialsModal({
         </div>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

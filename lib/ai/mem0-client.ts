@@ -105,8 +105,11 @@ async function getMem0Credentials(): Promise<Mem0Credentials> {
       settingsDb.get('mem0_api_key'),
     ])
 
+    // settingsDb.get retorna string | null, então só precisa comparar com 'true'
     const enabled = enabledRaw === 'true'
     const apiKey = apiKeyFromDb || process.env.MEM0_API_KEY || null
+
+    console.log(`[mem0] Credentials loaded: enabled=${enabled} (raw: ${enabledRaw}, type: ${typeof enabledRaw}), hasApiKey=${!!apiKey}`)
 
     credentialsCache = { apiKey, enabled }
     cacheTimestamp = now
@@ -194,10 +197,12 @@ export async function fetchRelevantMemories(
 
   try {
     // Busca memórias como array (não string formatada)
+    // IMPORTANTE: app_id deve ser passado para filtrar memórias do SmartZap
     const memories = await withTimeout(
       getMemories(query, {
         user_id: config.user_id,
         agent_id: config.agent_id,
+        app_id: config.app_id || APP_ID,
         mem0ApiKey: creds.apiKey,
       }),
       MEM0_TIMEOUT_MS

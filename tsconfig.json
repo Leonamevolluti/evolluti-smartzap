@@ -42,6 +42,7 @@
     "tmp",
     "docs/workflow-builder-template",
     "lib/builder/auth.ts",
-    "lib/builder/db"
+    "lib/builder/db",
+    "tests/adversarial"
   ]
 }

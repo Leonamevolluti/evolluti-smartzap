@@ -171,31 +171,18 @@ export const useBatchTemplates = () => {
                 metaTemplates.map(t => [t.name, { status: t.status, category: t.category }])
             );
 
-            // DEBUG: Log all Meta templates names
-            console.log('[REFRESH STATUS] Meta templates found:', metaTemplates.length);
-            console.log('[REFRESH STATUS] Meta template names:', [...metaStatusMap.keys()].slice(0, 10), '...');
-
             setSubmissions(prev => prev.map(sub => {
                 if (sub.id !== submissionId) return sub;
-
-                console.log('[REFRESH STATUS] Processing submission:', sub.name);
-                console.log('[REFRESH STATUS] Submission templates:', sub.templates.map(t => t.name));
 
                 // Update templates with REAL status from Meta
                 const updatedTemplates = sub.templates.map(t => {
                     const metaInfo = metaStatusMap.get(t.name);
-
-                    console.log(`[REFRESH STATUS] Template "${t.name}" -> Meta info:`, metaInfo || 'NOT FOUND');
 
                     if (!metaInfo) {
                         // Template not found in Meta yet - keep as PENDING (takes time to propagate)
                         // Only mark as rejected if it's been more than 10 minutes since creation
                         const createdAt = new Date(t.generatedAt || sub.createdAt).getTime();
                         const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
-
-                        console.log(`[REFRESH STATUS] Template "${t.name}" created at:`, new Date(createdAt).toISOString());
-                        console.log(`[REFRESH STATUS] Ten minutes ago:`, new Date(tenMinutesAgo).toISOString());
-                        console.log(`[REFRESH STATUS] Is old?:`, createdAt < tenMinutesAgo);
 
                         if (createdAt < tenMinutesAgo) {
                             // Template is old and still not in Meta - likely failed
