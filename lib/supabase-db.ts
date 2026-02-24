@@ -31,6 +31,7 @@ import {
 } from '../types'
 import { isSuppressionActive } from '@/lib/phone-suppressions'
 import { canonicalTemplateCategory } from '@/lib/template-category'
+import { normalizePhoneNumber, validatePhoneNumber } from '@/lib/phone-formatter'
 
 // Gera um ID compatível com ambientes que usam UUID (preferencial) e também funciona como TEXT.
 // - Em Supabase, muitos schemas antigos usam `uuid` como PK.
@@ -1042,6 +1043,92 @@ export const contactDb = {
         if (error) throw error
 
         return ids.length
+    },
+
+    // Atualiza as tags de vários contatos em lote.
+    // Estratégia: (tags_atuais ∪ tagsToAdd) − tagsToRemove para cada contato.
+    // Usa upsert com linha completa para evitar violação de constraints NOT NULL
+    // em caso de race condition (contato deletado entre SELECT e UPSERT).
+    bulkUpdateTags: async (
+        ids: string[],
+        tagsToAdd: string[],
+        tagsToRemove: string[]
+    ): Promise<number> => {
+        if (ids.length === 0) return 0
+
+        const { data, error } = await supabase
+            .from('contacts')
+            .select('*')
+            .in('id', ids)
+
+        if (error) throw error
+
+        const now = new Date().toISOString()
+        // Calcula novas tags: (atual ∪ tagsToAdd) − tagsToRemove
+        const updates = (data || []).map((c) => ({
+            ...c,
+            tags: [
+                ...new Set(
+                    [...(c.tags ?? []), ...tagsToAdd]
+                        .filter((t) => !tagsToRemove.includes(t))
+                ),
+            ],
+            updated_at: now,
+        }))
+
+        // Todos os contatos podem ter sido deletados entre SELECT e UPSERT (race condition)
+        if (updates.length === 0) return 0
+
+        const { error: upsertError } = await supabase
+            .from('contacts')
+            .upsert(updates, { onConflict: 'id' })
+
+        if (upsertError) throw upsertError
+        return updates.length
+    },
+
+    // Atualiza o status de vários contatos em lote para o mesmo valor.
+    // Estratégia OPT_IN: desativa phone_suppressions para os números atualizados.
+    bulkUpdateStatus: async (
+        ids: string[],
+        status: ContactStatus
+    ): Promise<number> => {
+        if (ids.length === 0) return 0
+
+        const { data, error } = await supabase
+            .from('contacts')
+            .update({ status, updated_at: new Date().toISOString() })
+            .in('id', ids)
+            .select('id, phone')
+
+        if (error) throw error
+
+        const updated = data?.length ?? 0
+
+        // OPT_IN: desativar phone_suppressions para esses números (normaliza para E.164)
+        if (status === ContactStatus.OPT_IN && updated > 0) {
+            const phones = (data || [])
+                .map((c) => c.phone)
+                .filter(Boolean)
+                .map((p) => normalizePhoneNumber(p))
+                .filter((p) => validatePhoneNumber(p))
+            if (phones.length > 0) {
+                const { error: suppressionError } = await supabase
+                    .from('phone_suppressions')
+                    .update({ is_active: false })
+                    .in('phone', phones)
+                if (suppressionError) {
+                    // Falha intencional não-propagada: o UPDATE de contacts já foi commitado
+                    // e não pode ser revertido sem uma transação atômica (RPC). Lançar aqui
+                    // retornaria 500 ao caller mas o status já estaria alterado no DB, o que
+                    // seria mais confuso do que um soft-failure silencioso.
+                    // TODO: mover ambos os UPDATEs para uma RPC Supabase para garantir atomicidade.
+                    console.error('Erro ao desativar phone_suppressions:', suppressionError)
+                }
+            }
+        }
+
+        return updated
     },
 
     import: async (contacts: Omit<Contact, 'id' | 'lastActive'>[]): Promise<{ inserted: number; updated: number }> => {
