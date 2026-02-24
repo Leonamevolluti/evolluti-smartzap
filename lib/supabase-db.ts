@@ -592,7 +592,11 @@ export const contactDb = {
         }
 
         if (tag && tag !== 'ALL') {
-            query = query.filter('tags', 'cs', JSON.stringify([tag]))
+            if (tag === 'NONE') {
+                query = query.filter('tags', 'eq', '[]')
+            } else {
+                query = query.filter('tags', 'cs', JSON.stringify([tag]))
+            }
         }
 
         // Filtro de status com lógica especial para SUPPRESSED
@@ -688,8 +692,12 @@ export const contactDb = {
         }
 
         if (tag && tag !== 'ALL') {
-            // PostgREST usa 'cs' (contains) que traduz para @> no PostgreSQL
-            query = query.filter('tags', 'cs', JSON.stringify([tag]))
+            if (tag === 'NONE') {
+                query = query.filter('tags', 'eq', '[]')
+            } else {
+                // PostgREST usa 'cs' (contains) que traduz para @> no PostgreSQL
+                query = query.filter('tags', 'cs', JSON.stringify([tag]))
+            }
         }
 
         if (status === 'SUPPRESSED') {

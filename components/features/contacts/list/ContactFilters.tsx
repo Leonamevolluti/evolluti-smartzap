@@ -91,6 +91,7 @@ export const ContactFilters: React.FC<ContactFiltersProps> = ({
           aria-label="Filtrar contatos por tag"
         >
           <option value="ALL">Todas Tags</option>
+          <option value="NONE">Sem tags</option>
           {tags.map(tag => (
             <option key={tag} value={tag}>{tag}</option>
           ))}
