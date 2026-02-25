@@ -86,7 +86,7 @@ export function createContactDbMock() {
     getTags: vi.fn<() => Promise<string[]>>().mockResolvedValue([]),
     getStats: vi.fn().mockResolvedValue({ total: 0, optIn: 0, optOut: 0 }),
     bulkSetCustomField: vi.fn().mockResolvedValue({ updated: 0, notFound: [] }),
-    bulkUpdateTags: vi.fn().mockResolvedValue(undefined),
+    bulkUpdateTags: vi.fn<(ids: string[], tagsToAdd: string[], tagsToRemove: string[]) => Promise<number>>().mockResolvedValue(0),
     bulkUpdateStatus: vi.fn<(ids: string[], status: ContactStatus) => Promise<number>>().mockResolvedValue(0),
   }
 }

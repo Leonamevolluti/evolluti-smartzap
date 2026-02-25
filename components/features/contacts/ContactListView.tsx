@@ -94,7 +94,7 @@ export interface ContactListViewProps {
   isImporting: boolean;
   isDeleting: boolean;
   onUnsuppress?: (phone: string) => void;
-  onBulkUpdateTags: (tagsToAdd: string[], tagsToRemove: string[]) => void;
+  onBulkUpdateTags: (tagsToAdd: string[], tagsToRemove: string[], onDone?: () => void) => void;
   isBulkUpdatingTags?: boolean;
   onBulkUpdateStatus: (status: ContactStatus) => void;
   isBulkUpdatingStatus?: boolean;
@@ -444,8 +444,7 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
         selectedCount={selectedIds.size}
         availableTags={tags}
         onApply={(tagsToAdd, tagsToRemove) => {
-          onBulkUpdateTags(tagsToAdd, tagsToRemove)
-          setIsBulkTagsModalOpen(false)
+          onBulkUpdateTags(tagsToAdd, tagsToRemove, () => setIsBulkTagsModalOpen(false))
         }}
         isLoading={isBulkUpdatingTags}
       />

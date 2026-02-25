@@ -540,12 +540,11 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
     onImportFile: importFromFileMutation.mutateAsync,
     isImporting: importMutation.isPending || importFromFileMutation.isPending,
     isDeleting: deleteMutation.isPending || deleteManyMutation.isPending,
-    onBulkUpdateTags: (tagsToAdd: string[], tagsToRemove: string[]) =>
-      bulkUpdateTagsMutation.mutate({
-        ids: Array.from(selectedIds),
-        tagsToAdd,
-        tagsToRemove,
-      }),
+    onBulkUpdateTags: (tagsToAdd: string[], tagsToRemove: string[], onDone?: () => void) =>
+      bulkUpdateTagsMutation.mutate(
+        { ids: Array.from(selectedIds), tagsToAdd, tagsToRemove },
+        { onSuccess: onDone }
+      ),
     isBulkUpdatingTags: bulkUpdateTagsMutation.isPending,
     onBulkUpdateStatus: (status: ContactStatus) =>
       bulkUpdateStatusMutation.mutate({

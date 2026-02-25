@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 const BulkUpdateTagsSchema = z.object({
-  ids: z.array(z.string().min(1, 'ID inválido')).min(1, 'Selecione pelo menos um contato'),
+  ids: z.array(z.string().min(1, 'ID inválido')).min(1, 'Selecione pelo menos um contato').max(500, 'Máximo de 500 contatos por operação'),
   tagsToAdd: z.array(z.string().min(1, 'Tag não pode ser vazia')).optional().default([]),
   tagsToRemove: z.array(z.string().min(1, 'Tag não pode ser vazia')).optional().default([]),
 })

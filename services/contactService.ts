@@ -338,6 +338,7 @@ export const contactService = {
     return updated;
   },
 
+
   bulkUpdateStatus: async (ids: string[], status: ContactStatus): Promise<number> => {
     const response = await fetch('/api/contacts/bulk-status', {
       method: 'POST',
