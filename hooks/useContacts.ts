@@ -321,7 +321,6 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
     },
   })
 
-
   const importMutation = useMutation({
     mutationFn: contactService.import,
     onSuccess: (result) => {

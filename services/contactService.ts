@@ -353,7 +353,6 @@ export const contactService = {
     return updated;
   },
 
-
   /**
    * Remove a supressão global de um telefone.
    * Útil para números de teste ou clientes que pediram para voltar a receber.

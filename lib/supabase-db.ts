@@ -33,6 +33,39 @@ import { isSuppressionActive } from '@/lib/phone-suppressions'
 import { canonicalTemplateCategory } from '@/lib/template-category'
 import { normalizePhoneNumber, validatePhoneNumber } from '@/lib/phone-formatter'
 
+// Divide array em chunks de tamanho n para evitar 414 Request-URI Too Large
+// no PostgREST: .in('field', array) serializa todos os valores na URL.
+function chunk<T>(array: T[], size: number): T[][] {
+    const chunks: T[][] = []
+    for (let i = 0; i < array.length; i += size) {
+        chunks.push(array.slice(i, i + size))
+    }
+    return chunks
+}
+
+/**
+ * Normaliza tags que podem estar aninhadas como [["tag"]] → ["tag"].
+ * Resolve corrupção de dados onde arrays JSONB foram double-wrapped.
+ */
+function flattenTags(tags: unknown): string[] {
+    if (!Array.isArray(tags)) return []
+    return tags
+        .flat(Infinity)
+        .map(t => {
+            const s = String(t ?? '').trim()
+            // Remove brackets de strings que parecem JSON arrays: '["tag"]' → 'tag'
+            if (s.startsWith('[') && s.endsWith(']')) {
+                try {
+                    const parsed = JSON.parse(s)
+                    if (Array.isArray(parsed)) return parsed.map(String)
+                } catch { /* not JSON, keep as-is */ }
+            }
+            return s
+        })
+        .flat()
+        .filter(Boolean)
+}
+
 // Gera um ID compatível com ambientes que usam UUID (preferencial) e também funciona como TEXT.
 // - Em Supabase, muitos schemas antigos usam `uuid` como PK.
 // - No schema consolidado atual, os PKs são TEXT com defaults, mas aceitar UUID como string é ok.
@@ -374,12 +407,29 @@ export const campaignDb = {
         // Copy campaign contacts first so we can set total_recipients accurately.
         // Observação: Supabase JS não oferece transação multi-step facilmente aqui;
         // então tentamos manter o estado consistente (rollback best-effort em falhas).
-        const { data: existingContacts, error: existingContactsError } = await supabase
-            .from('campaign_contacts')
-            .select('contact_id, phone, name, email, custom_fields')
-            .eq('campaign_id', id)
+        //
+        // BUG FIX: sem .limit() o PostgREST silenciosamente trunca em 1000 rows, fazendo
+        // a cópia perder contatos. Paginamos em blocos de 1000 até buscar todos os contatos.
+        const existingContacts: any[] = []
+        let dupOffset = 0
+        const DUP_PAGE_SIZE = 1000
 
-        if (existingContactsError) throw existingContactsError
+        while (true) {
+            const { data: page, error: existingContactsError } = await supabase
+                .from('campaign_contacts')
+                .select('contact_id, phone, name, email, custom_fields')
+                .eq('campaign_id', id)
+                .order('id', { ascending: true })
+                .range(dupOffset, dupOffset + DUP_PAGE_SIZE - 1)
+
+            if (existingContactsError) throw existingContactsError
+
+            const rows = page || []
+            existingContacts.push(...rows)
+
+            if (rows.length < DUP_PAGE_SIZE) break
+            dupOffset += DUP_PAGE_SIZE
+        }
 
         const recipientsCount = existingContacts?.length ?? original.recipients ?? 0
 
@@ -496,27 +546,48 @@ export const campaignDb = {
 // ============================================================================
 
 export const contactDb = {
+    // Busca TODOS os contatos com paginação interna para evitar truncamento do PostgREST.
+    // Usado pelo wizard de campanhas que precisa do dataset completo para calcular audiência.
     getAll: async (): Promise<Contact[]> => {
-        const { data, error } = await supabase
-            .from('contacts')
-            .select('*')
-            .order('created_at', { ascending: false })
+        const PAGE_SIZE = 1000
+        const allRows: Record<string, unknown>[] = []
+        let from = 0
 
-        if (error) throw error
+        // Paginação interna: busca em lotes de PAGE_SIZE até esgotar os registros.
+        // O PostgREST trunca silenciosamente em 1000 rows sem .range(), então
+        // usamos .range() explícito e iteramos até receber menos que PAGE_SIZE.
+        while (true) {
+            const to = from + PAGE_SIZE - 1
+            const { data, error } = await supabase
+                .from('contacts')
+                .select('*')
+                .order('id', { ascending: true })
+                .range(from, to)
 
-        return (data || []).map(row => ({
-            id: row.id,
-            name: row.name,
-            phone: row.phone,
-            email: row.email,
+            if (error) throw error
+
+            const rows = data || []
+            allRows.push(...rows)
+
+            // Se recebemos menos que PAGE_SIZE, não há mais páginas
+            if (rows.length < PAGE_SIZE) break
+
+            from += PAGE_SIZE
+        }
+
+        return allRows.map(row => ({
+            id: row.id as string,
+            name: row.name as string,
+            phone: row.phone as string,
+            email: row.email as string | undefined,
             status: (row.status as ContactStatus) || ContactStatus.OPT_IN,
-            tags: row.tags || [],
+            tags: flattenTags(row.tags),
             lastActive: row.updated_at
-                ? new Date(row.updated_at).toLocaleDateString()
-                : (row.created_at ? new Date(row.created_at).toLocaleDateString() : '-'),
-            createdAt: row.created_at,
-            updatedAt: row.updated_at,
-            custom_fields: row.custom_fields,
+                ? new Date(row.updated_at as string).toLocaleDateString()
+                : (row.created_at ? new Date(row.created_at as string).toLocaleDateString() : '-'),
+            createdAt: row.created_at as string,
+            updatedAt: row.updated_at as string,
+            custom_fields: row.custom_fields as Record<string, any> | undefined,
         }))
     },
 
@@ -557,29 +628,28 @@ export const contactDb = {
             return p.startsWith('+') ? p.slice(1) : p
         }
 
-        // SEMPRE busca supressões ativas para calcular status efetivo
-        const { data: suppressionRows, error: suppressionError } = await supabase
-            .from('phone_suppressions')
-            .select('phone,is_active,expires_at,reason,source')
-            .eq('is_active', true)
-            .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString())
+        // Pré-carrega supressões apenas para o filtro SUPPRESSED (precisa antes da query principal)
+        // Para outros status, as supressões são carregadas depois da query para escopo por página.
+        let preSuppressedPhonesNormalized = new Set<string>()
+        if (status === 'SUPPRESSED') {
+            // Busca todas as supressões ativas para montar o filtro IN da query principal.
+            // Limitado a 5000 para evitar truncação silenciosa do PostgREST.
+            const { data: preSupRows, error: preSupError } = await supabase
+                .from('phone_suppressions')
+                .select('phone')
+                .eq('is_active', true)
+                .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString())
+                .limit(5000)
 
-        if (suppressionError) throw suppressionError
+            if (preSupError) throw preSupError
 
-        // Mapa de supressões indexado por telefone normalizado (sem +)
-        const suppressionMap = new Map<string, { reason: string | null; source: string | null; expiresAt: string | null }>()
-        const suppressedPhonesNormalized = new Set<string>()
+            if ((preSupRows?.length ?? 0) >= 5000) {
+                console.warn('contactDb.list(): limite de 5000 supressões atingido — filtro SUPPRESSED pode estar incompleto')
+            }
 
-        for (const row of suppressionRows || []) {
-            const phone = String(row.phone || '').trim()
-            if (phone) {
-                const normalized = normalizePhone(phone)
-                suppressedPhonesNormalized.add(normalized)
-                suppressionMap.set(normalized, {
-                    reason: row.reason ?? null,
-                    source: row.source ?? null,
-                    expiresAt: row.expires_at ?? null,
-                })
+            for (const row of preSupRows || []) {
+                const phone = String(row.phone || '').trim()
+                if (phone) preSuppressedPhonesNormalized.add(normalizePhone(phone))
             }
         }
 
@@ -593,8 +663,8 @@ export const contactDb = {
         }
 
         if (tag && tag !== 'ALL') {
-            if (tag === 'NONE') {
-                query = query.filter('tags', 'eq', '[]')
+            if (tag === 'NONE' || tag === '__NO_TAGS__') {
+                query = query.or('tags.is.null,tags.eq.[]')
             } else {
                 query = query.filter('tags', 'cs', JSON.stringify([tag]))
             }
@@ -603,11 +673,11 @@ export const contactDb = {
         // Filtro de status com lógica especial para SUPPRESSED
         if (status === 'SUPPRESSED') {
             // Filtra apenas contatos que estão suprimidos
-            if (suppressedPhonesNormalized.size === 0) {
+            if (preSuppressedPhonesNormalized.size === 0) {
                 return { data: [], total: 0 }
             }
             // Gera variações com e sem + para o filtro IN
-            const phoneVariations = Array.from(suppressedPhonesNormalized).flatMap(p => [p, '+' + p])
+            const phoneVariations = Array.from(preSuppressedPhonesNormalized).flatMap(p => [p, '+' + p])
             query = query.in('phone', phoneVariations)
         } else if (status && status !== 'ALL') {
             query = query.eq('status', status)
@@ -618,6 +688,50 @@ export const contactDb = {
             .range(offset, offset + limit - 1)
 
         if (error) throw error
+
+        // Busca supressões apenas para os phones da página atual.
+        // Evita carregar 10.000+ supressões para exibir 10 contatos.
+        const phonesOnPage = (data || []).map((c: any) => String(c.phone || '').trim()).filter(Boolean)
+
+        const suppressionMap = new Map<string, { reason: string | null; source: string | null; expiresAt: string | null }>()
+
+        if (phonesOnPage.length > 0) {
+            // Gera variantes com/sem '+' para garantir match independente do formato armazenado
+            const phoneVariants = new Set<string>()
+            for (const phone of phonesOnPage) {
+                const p = phone.trim()
+                if (!p) continue
+                phoneVariants.add(p)
+                if (p.startsWith('+')) {
+                    phoneVariants.add(p.slice(1))
+                } else {
+                    phoneVariants.add('+' + p)
+                }
+            }
+            const phonesForSuppressionLookup = Array.from(phoneVariants)
+
+            const { data: suppressionRows, error: suppressionError } = await supabase
+                .from('phone_suppressions')
+                .select('phone,is_active,expires_at,reason,source')
+                .eq('is_active', true)
+                .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString())
+                .in('phone', phonesForSuppressionLookup)
+                .limit(5000)
+
+            if (suppressionError) throw suppressionError
+
+            for (const row of suppressionRows || []) {
+                const phone = String(row.phone || '').trim()
+                if (phone) {
+                    const normalized = normalizePhone(phone)
+                    suppressionMap.set(normalized, {
+                        reason: row.reason ?? null,
+                        source: row.source ?? null,
+                        expiresAt: row.expires_at ?? null,
+                    })
+                }
+            }
+        }
 
         return {
             data: (data || []).map(row => {
@@ -637,7 +751,7 @@ export const contactDb = {
                     email: row.email,
                     status: effectiveStatus, // Status visual calculado
                     originalStatus: dbStatus, // Status real do banco (para referência)
-                    tags: row.tags || [],
+                    tags: flattenTags(row.tags),
                     lastActive: row.updated_at
                         ? new Date(row.updated_at).toLocaleDateString()
                         : (row.created_at ? new Date(row.created_at).toLocaleDateString() : '-'),
@@ -680,29 +794,9 @@ export const contactDb = {
             return Array.from(new Set(parts.map((p) => p.trim()).filter(Boolean))).join(',')
         }
 
-        let query = supabase
-            .from('contacts')
-            .select('id')
-
-        if (search) {
-            query = query.or(buildContactSearchOr(search))
-        }
-
-        if (status && status !== 'ALL' && status !== 'SUPPRESSED') {
-            query = query.eq('status', status)
-        }
-
-        if (tag && tag !== 'ALL') {
-            if (tag === 'NONE') {
-                query = query.filter('tags', 'eq', '[]')
-            } else {
-                // PostgREST usa 'cs' (contains) que traduz para @> no PostgreSQL
-                query = query.filter('tags', 'cs', JSON.stringify([tag]))
-            }
-        }
-
+        // Pré-carrega supressões se necessário (antes de construir a query)
+        let suppressedPhones: string[] = []
         if (status === 'SUPPRESSED') {
-            // Optimized: Filter active suppressions at database level
             const { data: suppressionRows, error: suppressionError } = await supabase
                 .from('phone_suppressions')
                 .select('phone')
@@ -711,22 +805,122 @@ export const contactDb = {
 
             if (suppressionError) throw suppressionError
 
-            const suppressedPhones = (suppressionRows || [])
-                .map((row: any) => String(row.phone || '').trim())
+            suppressedPhones = (suppressionRows || [])
+                .map((row: any) => String(row.phone || '').trim().replace(/^\+/, ''))
                 .filter(Boolean)
 
-            if (!suppressedPhones.length) {
-                return []
-            }
+            if (!suppressedPhones.length) return []
 
-            query = query.in('phone', suppressedPhones)
+            // Gera variantes com/sem '+' para match com contacts.phone (formato inconsistente)
+            suppressedPhones = suppressedPhones.flatMap(p => [p, '+' + p])
         }
 
-        const { data, error } = await query
+        // Função que reconstrói a query com todos os filtros + range (evita mutação do builder)
+        const buildQuery = (from: number, to: number) => {
+            let q = supabase.from('contacts').select('id').order('id', { ascending: true }).range(from, to)
 
-        if (error) throw error
+            if (search) q = q.or(buildContactSearchOr(search))
 
-        return (data || []).map((row: any) => String(row.id))
+            if (status && status !== 'ALL' && status !== 'SUPPRESSED') {
+                q = q.eq('status', status)
+            }
+
+            if (tag && tag !== 'ALL') {
+                if (tag === 'NONE' || tag === '__NO_TAGS__') {
+                    q = q.or('tags.is.null,tags.eq.[]')
+                } else {
+                    q = q.filter('tags', 'cs', JSON.stringify([tag]))
+                }
+            }
+
+            // SUPPRESSED é tratado no caminho separado com chunking (ver abaixo).
+            // Esta função só é chamada para status != 'SUPPRESSED'.
+
+            return q
+        }
+
+        // Para status SUPPRESSED com muitos phones suprimidos, .in('phone', suppressedPhones)
+        // serializa todos na URL e estoura o limite de 8KB do Cloudflare (HTTP 414).
+        // Fix: divide em chunks de 100 phones, faz queries paralelas e une os IDs únicos.
+        if (status === 'SUPPRESSED' && suppressedPhones.length > 0) {
+            const PHONE_CHUNK_SIZE = 100
+            const phoneChunks = chunk(suppressedPhones, PHONE_CHUNK_SIZE)
+
+            const allIds: string[] = []
+            const seen = new Set<string>()
+
+            // Processa cada chunk de phones com concorrência limitada para obter os IDs de contatos
+            const CONCURRENT_LIMIT = 5
+            const chunkResults: string[][] = []
+            for (let i = 0; i < phoneChunks.length; i += CONCURRENT_LIMIT) {
+                const batch = phoneChunks.slice(i, i + CONCURRENT_LIMIT)
+                const batchResults = await Promise.all(
+                    batch.map(async (phones) => {
+                        const chunkIds: string[] = []
+                        let chunkOffset = 0
+                        const PAGE_SIZE = 1000
+
+                        while (true) {
+                            let q = supabase.from('contacts').select('id').order('id', { ascending: true }).range(chunkOffset, chunkOffset + PAGE_SIZE - 1)
+
+                            if (search) q = q.or(buildContactSearchOr(search))
+
+                            if (tag && tag !== 'ALL') {
+                                if (tag === 'NONE' || tag === '__NO_TAGS__') {
+                                    q = q.or('tags.is.null,tags.eq.[]')
+                                } else {
+                                    q = q.filter('tags', 'cs', JSON.stringify([tag]))
+                                }
+                            }
+
+                            q = q.in('phone', phones)
+
+                            const { data, error } = await q
+                            if (error) throw error
+
+                            const rows = data || []
+                            chunkIds.push(...rows.map((row: any) => String(row.id)))
+
+                            if (rows.length < PAGE_SIZE) break
+                            chunkOffset += PAGE_SIZE
+                        }
+
+                        return chunkIds
+                    })
+                )
+                chunkResults.push(...batchResults)
+            }
+
+            for (const ids of chunkResults) {
+                for (const id of ids) {
+                    if (!seen.has(id)) {
+                        seen.add(id)
+                        allIds.push(id)
+                    }
+                }
+            }
+
+            return allIds
+        }
+
+        // Pagina em blocos de 1000 para contornar o limite padrão do PostgREST
+        const PAGE_SIZE = 1000
+        const allIds: string[] = []
+        let offset = 0
+
+        while (true) {
+            const { data, error } = await buildQuery(offset, offset + PAGE_SIZE - 1)
+
+            if (error) throw error
+
+            const rows = data || []
+            allIds.push(...rows.map((row: any) => String(row.id)))
+
+            if (rows.length < PAGE_SIZE) break
+            offset += PAGE_SIZE
+        }
+
+        return allIds
     },
 
     getById: async (id: string): Promise<Contact | undefined> => {
@@ -744,7 +938,7 @@ export const contactDb = {
             phone: data.phone,
             email: data.email,
             status: (data.status as ContactStatus) || ContactStatus.OPT_IN,
-            tags: data.tags || [],
+            tags: flattenTags(data.tags),
             lastActive: data.updated_at
                 ? new Date(data.updated_at).toLocaleDateString()
                 : (data.created_at ? new Date(data.created_at).toLocaleDateString() : '-'),
@@ -769,7 +963,7 @@ export const contactDb = {
             phone: data.phone,
             email: data.email,
             status: (data.status as ContactStatus) || ContactStatus.OPT_IN,
-            tags: data.tags || [],
+            tags: flattenTags(data.tags),
             lastActive: data.updated_at
                 ? new Date(data.updated_at).toLocaleDateString()
                 : (data.created_at ? new Date(data.created_at).toLocaleDateString() : '-'),
@@ -801,7 +995,7 @@ export const contactDb = {
             .single()
 
         if (existing) {
-            const mergedTags = uniq([...(existing.tags || []), ...(contact.tags || []), ...tagsToMerge])
+            const mergedTags = uniq([...flattenTags(existing.tags), ...(contact.tags || []), ...tagsToMerge])
             const mergedCustomFields = mergeCustomFields(existing.custom_fields, contact.custom_fields)
             const updateData: any = {
                 updated_at: now,
@@ -882,7 +1076,7 @@ export const contactDb = {
             if (contact.name) updateData.name = contact.name
             if (contact.email !== undefined) updateData.email = contact.email
             if (contact.status) updateData.status = contact.status
-            if (contact.tags) updateData.tags = contact.tags
+            if (contact.tags) updateData.tags = flattenTags(contact.tags)
             if (contact.custom_fields) updateData.custom_fields = contact.custom_fields
 
             const { error: updateError } = await supabase
@@ -898,7 +1092,7 @@ export const contactDb = {
                 phone: existing.phone,
                 email: contact.email ?? existing.email,
                 status: (contact.status || existing.status) as ContactStatus,
-                tags: contact.tags || existing.tags || [],
+                tags: flattenTags(contact.tags || existing.tags || []),
                 custom_fields: contact.custom_fields || existing.custom_fields || {},
                 lastActive: 'Agora mesmo',
                 createdAt: existing.created_at,
@@ -917,7 +1111,7 @@ export const contactDb = {
                 phone: contact.phone,
                 email: contact.email || null,
                 status: contact.status || ContactStatus.OPT_IN,
-                tags: contact.tags || [],
+                tags: flattenTags(contact.tags),
                 custom_fields: contact.custom_fields || {},
                 created_at: now,
             })
@@ -940,7 +1134,7 @@ export const contactDb = {
         if (data.phone !== undefined) updateData.phone = data.phone
         if (data.email !== undefined) updateData.email = data.email
         if (data.status !== undefined) updateData.status = data.status
-        if (data.tags !== undefined) updateData.tags = data.tags
+        if (data.tags !== undefined) updateData.tags = flattenTags(data.tags)
         if (data.custom_fields !== undefined) updateData.custom_fields = data.custom_fields
 
         updateData.updated_at = new Date().toISOString()
@@ -986,13 +1180,32 @@ export const contactDb = {
         if (!k) return { updated: 0, notFound: contactIds }
         if (!v) return { updated: 0, notFound: [] }
 
-        const { data, error } = await supabase
-            .from('contacts')
-            .select('*')
-            .in('id', contactIds)
+        // BUG FIX: .in('id', contactIds) com centenas de IDs serializa todos na URL
+        // e estoura o limite de 8KB do Cloudflare (HTTP 414).
+        // Fix: divide em chunks de 150 IDs, faz queries paralelas, une os resultados.
+        const ID_CHUNK_SIZE = 150
+        const allData: any[] = []
+        const idChunks = chunk(contactIds, ID_CHUNK_SIZE)
 
-        if (error) throw error
+        const CONCURRENT_LIMIT = 5
+        for (let i = 0; i < idChunks.length; i += CONCURRENT_LIMIT) {
+            const batch = idChunks.slice(i, i + CONCURRENT_LIMIT)
+            const batchResults = await Promise.all(
+                batch.map(async (idBatch) => {
+                    const { data: batchData, error: batchError } = await supabase
+                        .from('contacts')
+                        .select('*')
+                        .in('id', idBatch)
+                    if (batchError) throw batchError
+                    return batchData || []
+                })
+            )
+            for (const result of batchResults) {
+                allData.push(...result)
+            }
+        }
 
+        const data = allData
         const now = new Date().toISOString()
         const rows = (data || []).map((row: any) => {
             const base = (row.custom_fields && typeof row.custom_fields === 'object') ? row.custom_fields : {}
@@ -1032,23 +1245,23 @@ export const contactDb = {
         if (error) throw error
     },
 
+    // Deleta vários contatos via RPC para evitar 414 Request-URI Too Large.
+    // .delete().in('id', ids) gera URL longa com todos os IDs; RPC usa POST body.
     deleteMany: async (ids: string[]): Promise<number> => {
         if (ids.length === 0) return 0
 
-        const { error } = await supabase
-            .from('contacts')
-            .delete()
-            .in('id', ids)
+        const { data, error } = await supabase.rpc('bulk_delete_contacts', {
+            p_ids: ids,
+        })
 
         if (error) throw error
-
-        return ids.length
+        return (data as number) || 0
     },
 
-    // Atualiza as tags de vários contatos em lote.
+    // Atualiza as tags de vários contatos em lote via RPC.
     // Estratégia: (tags_atuais ∪ tagsToAdd) − tagsToRemove para cada contato.
-    // Usa upsert com linha completa para evitar violação de constraints NOT NULL
-    // em caso de race condition (contato deletado entre SELECT e UPSERT).
+    // Usa RPC (POST body) para evitar 414 Request-URI Too Large com .in('id', uuids[])
+    // e NOT NULL constraint violation no upsert parcial.
     bulkUpdateTags: async (
         ids: string[],
         tagsToAdd: string[],
@@ -1056,35 +1269,14 @@ export const contactDb = {
     ): Promise<number> => {
         if (ids.length === 0) return 0
 
-        const { data, error } = await supabase
-            .from('contacts')
-            .select('*')
-            .in('id', ids)
+        const { data, error } = await supabase.rpc('bulk_update_contact_tags', {
+            p_ids: ids,
+            p_tags_to_add: tagsToAdd,
+            p_tags_to_remove: tagsToRemove,
+        })
 
         if (error) throw error
-
-        const now = new Date().toISOString()
-        // Calcula novas tags: (atual ∪ tagsToAdd) − tagsToRemove
-        const updates = (data || []).map((c) => ({
-            ...c,
-            tags: [
-                ...new Set(
-                    [...(c.tags ?? []), ...tagsToAdd]
-                        .filter((t) => !tagsToRemove.includes(t))
-                ),
-            ],
-            updated_at: now,
-        }))
-
-        // Todos os contatos podem ter sido deletados entre SELECT e UPSERT (race condition)
-        if (updates.length === 0) return 0
-
-        const { error: upsertError } = await supabase
-            .from('contacts')
-            .upsert(updates, { onConflict: 'id' })
-
-        if (upsertError) throw upsertError
-        return updates.length
+        return (data as number) || 0
     },
 
     // Atualiza o status de vários contatos em lote para o mesmo valor.
@@ -1186,8 +1378,8 @@ export const contactDb = {
 
             if (existing) {
                 // Merge: combina tags e custom_fields, preserva dados existentes
-                const existingTags = Array.isArray(existing.tags) ? existing.tags : []
-                const newTags = Array.isArray(contact.tags) ? contact.tags : []
+                const existingTags = flattenTags(existing.tags)
+                const newTags = flattenTags(contact.tags)
                 const mergedTags = [...new Set([...existingTags, ...newTags])]
 
                 const existingCustomFields =
@@ -1216,7 +1408,7 @@ export const contactDb = {
                     phone: contact.phone,
                     email: (contact as any).email || null,
                     status: contact.status || ContactStatus.OPT_IN,
-                    tags: [...new Set(contact.tags || [])], // deduplica tags
+                    tags: [...new Set(flattenTags(contact.tags))], // deduplica tags
                     custom_fields: (contact as any).custom_fields || {},
                     created_at: now,
                 })
@@ -1256,7 +1448,17 @@ export const contactDb = {
             throw error
         }
 
-        return Array.isArray(data) ? data : []
+        if (Array.isArray(data)) return flattenTags(data)
+        // Fallback: PostgREST pode retornar JSON string em versões diferentes
+        if (typeof data === 'string') {
+            try {
+                const parsed = JSON.parse(data)
+                return Array.isArray(parsed) ? flattenTags(parsed) : []
+            } catch {
+                return []
+            }
+        }
+        return []
     },
 
     getStats: async () => {
@@ -1461,12 +1663,16 @@ export const campaignContactDb = {
         if (error) throw error
     },
 
+    // LEGADO: esta função carrega no máximo 1000 registros e deve ser evitada
+    // para campanhas com muitos contatos. Implemente paginação no consumidor se necessário.
     getContacts: async (campaignId: string) => {
+        // Limite explícito: sem .limit() o PostgREST silenciosamente trunca em 1000 rows.
         const { data, error } = await supabase
             .from('campaign_contacts')
             .select('*')
             .eq('campaign_id', campaignId)
             .order('sent_at', { ascending: false })
+            .limit(1000)
 
         if (error) throw error
 
@@ -2168,12 +2374,19 @@ export const campaignFolderDb = {
 
         if (foldersError) throw foldersError
 
-        // Get campaign counts per folder
+        // Get campaign counts per folder.
+        // Limite explícito de 5000: sem .limit() o PostgREST trunca silenciosamente em 1000
+        // rows, fazendo as contagens ficarem incorretas para instalações com muitas campanhas.
         const { data: campaigns, error: campaignsError } = await supabase
             .from('campaigns')
             .select('folder_id')
+            .limit(5000)
 
         if (campaignsError) throw campaignsError
+
+        if ((campaigns?.length ?? 0) >= 5000) {
+            console.warn('campaignFolderDb.getAllWithCounts(): limite de 5000 campanhas atingido — contagens de pasta podem estar incompletas')
+        }
 
         // Count campaigns per folder
         const countMap = new Map<string, number>()
