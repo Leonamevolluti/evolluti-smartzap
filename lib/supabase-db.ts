@@ -31,6 +31,7 @@ import {
 } from '../types'
 import { isSuppressionActive } from '@/lib/phone-suppressions'
 import { canonicalTemplateCategory } from '@/lib/template-category'
+import { normalizePhoneNumber } from '@/lib/phone-formatter'
 
 // Gera um ID compatível com ambientes que usam UUID (preferencial) e também funciona como TEXT.
 // - Em Supabase, muitos schemas antigos usam `uuid` como PK.
@@ -543,46 +544,16 @@ export const contactDb = {
                 `phone.ilike.${like}`,
             ]
 
+            // Ajuda quando o usuário digita telefone com espaços, parênteses, hífens etc.
+            // Como geralmente salvamos `phone` em E.164 (com +), buscar só por dígitos funciona bem.
             if (digits && digits !== term) {
                 parts.push(`phone.ilike.%${digits}%`)
             }
 
+            // Dedup e remove vazios
             return Array.from(new Set(parts.map((p) => p.trim()).filter(Boolean))).join(',')
         }
 
-        // Helper para normalizar telefone (remove + se tiver)
-        const normalizePhone = (phone: string) => {
-            const p = String(phone || '').trim()
-            return p.startsWith('+') ? p.slice(1) : p
-        }
-
-        // SEMPRE busca supressões ativas para calcular status efetivo
-        const { data: suppressionRows, error: suppressionError } = await supabase
-            .from('phone_suppressions')
-            .select('phone,is_active,expires_at,reason,source')
-            .eq('is_active', true)
-            .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString())
-
-        if (suppressionError) throw suppressionError
-
-        // Mapa de supressões indexado por telefone normalizado (sem +)
-        const suppressionMap = new Map<string, { reason: string | null; source: string | null; expiresAt: string | null }>()
-        const suppressedPhonesNormalized = new Set<string>()
-
-        for (const row of suppressionRows || []) {
-            const phone = String(row.phone || '').trim()
-            if (phone) {
-                const normalized = normalizePhone(phone)
-                suppressedPhonesNormalized.add(normalized)
-                suppressionMap.set(normalized, {
-                    reason: row.reason ?? null,
-                    source: row.source ?? null,
-                    expiresAt: row.expires_at ?? null,
-                })
-            }
-        }
-
-        // Monta query base
         let query = supabase
             .from('contacts')
             .select('*', { count: 'exact' })
@@ -591,25 +562,44 @@ export const contactDb = {
             query = query.or(buildContactSearchOr(search))
         }
 
-        if (tag && tag !== 'ALL') {
-            if (tag === 'NONE') {
-                query = query.filter('tags', 'eq', '[]')
-            } else {
-                query = query.filter('tags', 'cs', JSON.stringify([tag]))
-            }
+        if (status && status !== 'ALL' && status !== 'SUPPRESSED') {
+            query = query.eq('status', status)
         }
 
-        // Filtro de status com lógica especial para SUPPRESSED
+        if (tag && tag !== 'ALL') {
+            // PostgREST usa 'cs' (contains) que traduz para @> no PostgreSQL
+            query = query.filter('tags', 'cs', JSON.stringify([tag]))
+        }
+
+        let suppressionMap = new Map<string, { reason: string | null; source: string | null; expiresAt: string | null }>()
         if (status === 'SUPPRESSED') {
-            // Filtra apenas contatos que estão suprimidos
-            if (suppressedPhonesNormalized.size === 0) {
+            // Optimized: Filter active suppressions at database level instead of fetching all
+            const { data: suppressionRows, error: suppressionError } = await supabase
+                .from('phone_suppressions')
+                .select('phone,is_active,expires_at,reason,source')
+                .eq('is_active', true)
+                .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString())
+
+            if (suppressionError) throw suppressionError
+
+            const suppressedPhones: string[] = []
+            for (const row of suppressionRows || []) {
+                const phone = String(row.phone || '').trim()
+                if (phone) {
+                    suppressedPhones.push(phone)
+                    suppressionMap.set(phone, {
+                        reason: row.reason ?? null,
+                        source: row.source ?? null,
+                        expiresAt: row.expires_at ?? null,
+                    })
+                }
+            }
+
+            if (!suppressedPhones.length) {
                 return { data: [], total: 0 }
             }
-            // Gera variações com e sem + para o filtro IN
-            const phoneVariations = Array.from(suppressedPhonesNormalized).flatMap(p => [p, '+' + p])
-            query = query.in('phone', phoneVariations)
-        } else if (status && status !== 'ALL') {
-            query = query.eq('status', status)
+
+            query = query.in('phone', suppressedPhones)
         }
 
         const { data, error, count } = await query
@@ -620,33 +610,24 @@ export const contactDb = {
 
         return {
             data: (data || []).map(row => {
-                const rowPhone = String(row.phone || '').trim()
-                const normalizedRowPhone = normalizePhone(rowPhone)
-                const suppression = suppressionMap.get(normalizedRowPhone) || null
-                const isSuppressed = suppression !== null
-
-                // Status efetivo: SUPRIMIDO tem prioridade sobre qualquer outro status
-                const dbStatus = (row.status as ContactStatus) || ContactStatus.OPT_IN
-                const effectiveStatus = isSuppressed ? ContactStatus.SUPPRESSED : dbStatus
-
+                const suppression = suppressionMap.get(String(row.phone || '').trim()) || null
                 return ({
-                    id: row.id,
-                    name: row.name,
-                    phone: row.phone,
-                    email: row.email,
-                    status: effectiveStatus, // Status visual calculado
-                    originalStatus: dbStatus, // Status real do banco (para referência)
-                    tags: row.tags || [],
-                    lastActive: row.updated_at
-                        ? new Date(row.updated_at).toLocaleDateString()
-                        : (row.created_at ? new Date(row.created_at).toLocaleDateString() : '-'),
-                    createdAt: row.created_at,
-                    updatedAt: row.updated_at,
-                    custom_fields: row.custom_fields,
-                    suppressionReason: suppression?.reason ?? null,
-                    suppressionSource: suppression?.source ?? null,
-                    suppressionExpiresAt: suppression?.expiresAt ?? null,
-                })
+                id: row.id,
+                name: row.name,
+                phone: row.phone,
+                email: row.email,
+                status: (row.status as ContactStatus) || ContactStatus.OPT_IN,
+                tags: row.tags || [],
+                lastActive: row.updated_at
+                    ? new Date(row.updated_at).toLocaleDateString()
+                    : (row.created_at ? new Date(row.created_at).toLocaleDateString() : '-'),
+                createdAt: row.created_at,
+                updatedAt: row.updated_at,
+                custom_fields: row.custom_fields,
+                suppressionReason: suppression?.reason ?? null,
+                suppressionSource: suppression?.source ?? null,
+                suppressionExpiresAt: suppression?.expiresAt ?? null,
+            })
             }),
             total: count || 0,
         }
@@ -692,12 +673,8 @@ export const contactDb = {
         }
 
         if (tag && tag !== 'ALL') {
-            if (tag === 'NONE') {
-                query = query.filter('tags', 'eq', '[]')
-            } else {
-                // PostgREST usa 'cs' (contains) que traduz para @> no PostgreSQL
-                query = query.filter('tags', 'cs', JSON.stringify([tag]))
-            }
+            // PostgREST usa 'cs' (contains) que traduz para @> no PostgreSQL
+            query = query.filter('tags', 'cs', JSON.stringify([tag]))
         }
 
         if (status === 'SUPPRESSED') {
@@ -1058,20 +1035,9 @@ export const contactDb = {
 
         const now = new Date().toISOString()
 
-        // Normaliza telefone para E.164 usando a mesma lógica do normalizePhoneNumber
-        // Garante que números como "5524999402004" virem "+5524999402004"
-        // Sempre usa só os dígitos para evitar mismatch de deduplicação
-        // ex: "+55 (11) 9999-0001" e "+5511999990001" seriam tratados como contatos diferentes
-        const normalizePhone = (p: string): string => {
-            if (!p || typeof p !== 'string') return ''
-            const digits = p.replace(/\D/g, '')
-            if (!digits) return ''
-            return `+${digits}`
-        }
-
         // Normaliza e filtra contatos com telefone inválido (vazio ou só "+")
         const normalizedContacts = contacts
-            .map(c => ({ ...c, phone: normalizePhone(c.phone) }))
+            .map(c => ({ ...c, phone: normalizePhoneNumber(c.phone) }))
             .filter(c => c.phone.length > 2) // mínimo "+X" válido tem pelo menos 3 chars
 
         if (normalizedContacts.length === 0) return { inserted: 0, updated: 0 }

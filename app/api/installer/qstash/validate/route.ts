@@ -18,30 +18,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Detecta a região correta lendo o campo `iss` (issuer) do payload JWT.
-    // O Upstash embute no próprio token a URL do servidor correto —
-    // assim a validação funciona para qualquer região (US, EU, etc.) sem hardcode.
-    let qstashBaseUrl = 'https://qstash.upstash.io' // fallback genérico
-    try {
-      const payloadB64 = token.split('.')[1]
-      if (payloadB64) {
-        const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString())
-        if (payload.iss && typeof payload.iss === 'string') {
-          qstashBaseUrl = payload.iss.replace(/\/$/, '')
-        }
-      }
-    } catch {
-      // Se não conseguir decodificar o JWT, tenta com o fallback mesmo assim
-    }
-
-    // Validar que o URL é do domínio Upstash (previne SSRF via JWT manipulado)
-    const isUpstashDomain = /^https:\/\/[a-z0-9][a-z0-9-]*\.upstash\.io$/i.test(qstashBaseUrl)
-    if (!isUpstashDomain) {
-      qstashBaseUrl = 'https://qstash.upstash.io' // fallback seguro
-    }
-
-    // Valida o token no servidor correto para a região do usuário
-    const qstashRes = await fetch(`${qstashBaseUrl}/v2/schedules`, {
+    // Validar token fazendo uma requisição de listagem de schedules
+    // Endpoint US-East-1 (região obrigatória — outras regiões não são compatíveis)
+    const qstashRes = await fetch('https://qstash-us-east-1.upstash.io/v2/schedules', {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -51,7 +30,7 @@ export async function POST(req: NextRequest) {
     if (!qstashRes.ok) {
       if (qstashRes.status === 401 || qstashRes.status === 403) {
         return NextResponse.json(
-          { error: 'Token QStash inválido. Verifique se copiou o QSTASH_TOKEN corretamente (sem aspas).' },
+          { error: 'Token QStash inválido. Verifique se criou o QStash na região US-East-1 no Upstash.' },
           { status: 401 }
         );
       }
