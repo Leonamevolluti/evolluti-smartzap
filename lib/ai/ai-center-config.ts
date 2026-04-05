@@ -89,7 +89,6 @@ function normalizeGateway(input?: Partial<AiGatewayConfig> | null): AiGatewayCon
     primaryModel: typeof next.primaryModel === 'string' && next.primaryModel.trim()
       ? next.primaryModel.trim()
       : DEFAULT_AI_GATEWAY.primaryModel,
-    useBYOK: next.useBYOK !== false, // default true
     fallbackModels: validFallbackModels.length > 0 ? validFallbackModels : DEFAULT_AI_GATEWAY.fallbackModels,
   }
 }

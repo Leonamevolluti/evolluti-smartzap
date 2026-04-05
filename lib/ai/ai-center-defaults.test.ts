@@ -163,10 +163,6 @@ describe('DEFAULT_AI_GATEWAY', () => {
     expect(DEFAULT_AI_GATEWAY.primaryModel).toMatch(/^[a-z]+\//)
   })
 
-  it('deve ter useBYOK habilitado', () => {
-    expect(DEFAULT_AI_GATEWAY.useBYOK).toBe(true)
-  })
-
   it('deve ter fallbackModels como array nao vazio', () => {
     expect(Array.isArray(DEFAULT_AI_GATEWAY.fallbackModels)).toBe(true)
     expect(DEFAULT_AI_GATEWAY.fallbackModels.length).toBeGreaterThan(0)
