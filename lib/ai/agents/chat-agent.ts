@@ -352,7 +352,11 @@ export async function processChatAgent(
   // Verificar se o AI Gateway está habilitado
   const gatewayConfig = await getAiGatewayConfig()
   if (!gatewayConfig.enabled) {
-    return 'Desculpe, a IA está temporariamente desativada.'
+    return {
+      success: false,
+      error: 'IA desativada',
+      latencyMs: Date.now() - startTime,
+    }
   }
 
   // Get model configuration - routes through AI Gateway via OIDC
