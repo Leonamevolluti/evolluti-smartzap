@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Route, Info, Loader2, Check, ChevronDown, Search, Key, ExternalLink } from 'lucide-react';
+import { Route, Info, Loader2, Check, ChevronDown, Search, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import { DEFAULT_AI_GATEWAY, type AiGatewayConfig } from '@/lib/ai/ai-center-defaults';
 import type { GatewayModel } from '@/app/api/ai/gateway-models/route';
@@ -354,58 +354,33 @@ export function AIGatewayPanel() {
           )}
         </div>
 
-        {/* ── BYOK Toggle ── */}
-        <div className="rounded-xl border border-[var(--ds-border-default)] bg-[var(--ds-bg-elevated)] p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <Key size={15} className="shrink-0 text-[var(--ds-text-muted)]" />
-              <div>
-                <div className="text-sm font-medium text-[var(--ds-text-primary)]">Usar suas chaves de API (BYOK)</div>
-                <div className="text-xs text-[var(--ds-text-muted)] mt-0.5">
-                  Passa suas chaves diretamente ao Gateway — sem markup de custo
-                </div>
-              </div>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={config.useBYOK}
-              aria-label="Usar BYOK"
-              disabled={saving}
-              onClick={() => handleSaveConfig({ useBYOK: !config.useBYOK })}
-              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition ${
-                config.useBYOK
-                  ? 'border-emerald-500/40 bg-emerald-500/20'
-                  : 'border-[var(--ds-border-default)] bg-[var(--ds-bg-hover)]'
-              } ${saving ? 'cursor-not-allowed opacity-60' : ''}`}
-            >
-              <span
-                className={`inline-block size-4 rounded-full transition ${
-                  config.useBYOK ? 'translate-x-6 bg-emerald-300' : 'translate-x-1 bg-[var(--ds-text-muted)]'
-                }`}
-              />
-            </button>
+        {/* ── BYOK Link ── */}
+        {config.enabled && (
+          <div className="rounded-lg border border-[var(--ds-border-subtle)] bg-[var(--ds-bg-elevated)] p-3">
+            <p className="text-[11px] text-[var(--ds-text-secondary)]">
+              Para usar suas próprias chaves de API (BYOK), adicione-as no{' '}
+              <a
+                href={`https://vercel.com/${process.env.NEXT_PUBLIC_VERCEL_TEAM ?? 'dashboard'}/${process.env.NEXT_PUBLIC_VERCEL_PROJECT ?? 'project'}/ai-gateway/byok`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-emerald-400 underline hover:text-emerald-300"
+              >
+                Vercel AI Gateway → BYOK
+                <ExternalLink size={10} />
+              </a>
+              . O SmartZap as usa automaticamente — sem markup de custo.
+            </p>
           </div>
+        )}
 
-          {/* Link ao dashboard BYOK quando ativo */}
-          {config.useBYOK && (
-            <div className="mt-3 border-t border-[var(--ds-border-subtle)] pt-3">
-              <p className="text-[11px] text-[var(--ds-text-secondary)]">
-                Adicione suas chaves de API diretamente no{' '}
-                <a
-                  href={`https://vercel.com/${process.env.NEXT_PUBLIC_VERCEL_TEAM ?? 'dashboard'}/${process.env.NEXT_PUBLIC_VERCEL_PROJECT ?? 'project'}/ai-gateway/byok`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-emerald-400 underline hover:text-emerald-300"
-                >
-                  Vercel AI Gateway → BYOK
-                  <ExternalLink size={10} />
-                </a>
-                . O SmartZap as usa automaticamente.
-              </p>
-            </div>
-          )}
-        </div>
+        {/* Aviso quando IA desativada */}
+        {!config.enabled && (
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+            <p className="text-xs text-amber-400">
+              IA desativada — respostas automáticas não funcionarão.
+            </p>
+          </div>
+        )}
 
         {/* ── Fallback Models ── */}
         {config.enabled && (
@@ -534,7 +509,7 @@ export function AIGatewayPanel() {
                 <li>• Fallbacks automáticos entre providers</li>
                 <li>• Roteamento inteligente baseado em latência</li>
                 <li>• Observability centralizada no dashboard Vercel</li>
-                <li>• Suporte a BYOK (suas chaves existentes)</li>
+                <li>• BYOK nativo — configure suas chaves no dashboard Vercel</li>
               </ul>
               <p className="mt-2 text-amber-300/80">
                 <strong>Nota:</strong> Gateway e Helicone são mutuamente exclusivos. Ativar um desativa o outro automaticamente.
