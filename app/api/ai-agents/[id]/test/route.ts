@@ -167,8 +167,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     // Generate response
     const startTime = Date.now()
 
-    // Capture structured response and sources from tool execution
-    let structuredResponse: TestResponse | undefined
+    // Fontes RAG capturadas pelo execute do searchKnowledgeBase tool
     let ragSources: Array<{ title: string; content: string }> = []
     let searchPerformed = false
 
@@ -188,19 +187,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const respondTool = tool({
       description: 'Envia uma resposta estruturada ao usuário. SEMPRE use esta ferramenta para responder.',
       inputSchema: responseSchema,
-      execute: async (params) => {
-        const handoffParams = params as {
-          shouldHandoff?: boolean
-          handoffReason?: string
-        }
-        structuredResponse = {
-          ...params,
-          shouldHandoff: handoffParams.shouldHandoff,
-          handoffReason: handoffParams.handoffReason,
-          sources: ragSources.length > 0 ? ragSources : params.sources,
-        }
-        return { success: true, message: params.message }
-      },
+      // sem execute — para o loop quando chamado (Forced Tool Calling pattern)
     })
 
     // Knowledge base search tool - only created if agent has indexed content and API key
@@ -279,22 +266,37 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     console.log(`[ai-agents/test] Generating response with tools: ${Object.keys(tools).join(', ')}`)
 
-    // Generate with multi-step support (LLM can search, then respond)
-    await generateText({
+    // Gerar resposta com Forced Tool Calling pattern:
+    // toolChoice: 'required' obriga o modelo a sempre chamar uma tool
+    // respond sem execute para o loop quando chamado
+    // stopWhen: 5 steps para acomodar buscas RAG antes do respond
+    const result = await generateText({
       model,
       system: systemPrompt,
       messages: [{ role: 'user' as const, content: message }],
       temperature: agent.temperature ?? 0.7,
       maxOutputTokens: agent.max_tokens ?? 1024,
       tools,
-      ...(searchKnowledgeBaseTool ? { stopWhen: stepCountIs(3) } : {}), // Allow: search → think → respond
+      toolChoice: 'required',
+      stopWhen: stepCountIs(5),
     })
 
     const latencyMs = Date.now() - startTime
 
-    // If no structured response was captured, something went wrong
-    if (!structuredResponse) {
+    const respondCall = result.staticToolCalls.find(c => c.toolName === 'respond')
+    if (!respondCall) {
       throw new Error('No structured response generated from AI')
+    }
+    // Validar resposta do modelo (staticToolCalls não passa por Zod como o execute)
+    const parsedResponse = responseSchema.safeParse(respondCall.input)
+    if (!parsedResponse.success) {
+      console.error('[ai-agents/test] Resposta do agente inválida:', parsedResponse.error)
+      throw new Error('No structured response generated from AI')
+    }
+    let structuredResponse: TestResponse = parsedResponse.data as TestResponse
+    // Adicionar fontes do RAG se disponíveis (sempre sobrescreve model sources)
+    if (ragSources.length > 0) {
+      structuredResponse = { ...structuredResponse, sources: ragSources }
     }
 
     console.log(`[ai-agents/test] Response generated in ${latencyMs}ms. Search performed: ${searchPerformed}`)

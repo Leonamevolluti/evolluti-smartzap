@@ -105,6 +105,9 @@ tests/
 # Helpers de teste são necessários no CI
 !tests/helpers/
 !tests/helpers/**
+# Testes de integração da API de agentes IA
+!tests/api/
+!tests/api/**
 
 # Legacy (can be removed)
 # vite.config.ts

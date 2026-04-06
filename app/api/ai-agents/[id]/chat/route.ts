@@ -276,24 +276,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
     console.log(`[ai-agents/chat] Handoff enabled: ${handoffEnabled}`)
 
     // Tool: respond
+    // sem execute — para o loop quando chamado (Forced Tool Calling pattern)
     const respondTool = tool({
       description: 'Envia uma resposta estruturada ao usuário. SEMPRE use esta ferramenta para responder.',
       inputSchema: responseSchema,
-      execute: async (params) => {
-        const handoffParams = params as {
-          shouldHandoff?: boolean
-          handoffReason?: string
-          handoffSummary?: string
-        }
-        structuredResponse = {
-          ...params,
-          shouldHandoff: handoffParams.shouldHandoff,
-          handoffReason: handoffParams.handoffReason,
-          handoffSummary: handoffParams.handoffSummary,
-          sources: ragSources.length > 0 ? ragSources : params.sources,
-        }
-        return { success: true, message: params.message }
-      },
     })
 
     // Tool: searchKnowledgeBase (se disponível)
@@ -360,21 +346,37 @@ export async function POST(request: NextRequest, context: RouteContext) {
       tools.searchKnowledgeBase = searchKnowledgeBaseTool
     }
 
-    // Gerar resposta
-    await generateText({
+    // Gerar resposta com Forced Tool Calling pattern:
+    // toolChoice: 'required' obriga o modelo a sempre chamar uma tool
+    // respond sem execute para o loop quando chamado
+    // stopWhen: 5 steps para acomodar buscas RAG antes do respond
+    const result = await generateText({
       model,
       system: agent.system_prompt,
       messages: messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
       temperature: agent.temperature ?? 0.7,
       maxOutputTokens: agent.max_tokens ?? 2048,
       tools,
-      ...(searchKnowledgeBaseTool ? { stopWhen: stepCountIs(3) } : {}),
+      toolChoice: 'required',
+      stopWhen: stepCountIs(5),
     })
 
     const latencyMs = Date.now() - startTime
 
-    if (!structuredResponse) {
+    const respondCall = result.staticToolCalls.find(c => c.toolName === 'respond')
+    if (!respondCall) {
       throw new Error('Nenhuma resposta gerada pelo agente')
+    }
+    // Validar resposta do modelo (staticToolCalls não passa por Zod como o execute)
+    const parsed = responseSchema.safeParse(respondCall.input)
+    if (!parsed.success) {
+      console.error('[ai-agents/chat] Resposta do agente inválida:', parsed.error)
+      throw new Error('Nenhuma resposta gerada pelo agente')
+    }
+    structuredResponse = parsed.data as ChatResponse
+    // Adicionar fontes do RAG se disponíveis (sempre sobrescreve model sources)
+    if (ragSources.length > 0) {
+      structuredResponse = { ...structuredResponse, sources: ragSources }
     }
 
     // Se session mode, adicionar resposta ao histórico
