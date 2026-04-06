@@ -45,6 +45,9 @@ const phoneSchemaImport = z.string()
   .refine((val) => val.length >= 8, {
     message: 'Telefone inválido: deve ter pelo menos 8 dígitos',
   })
+  .refine((val) => val.length <= 20, {
+    message: 'Telefone inválido: número muito longo',
+  })
 
 // ============================================================================
 // Contact Schemas
@@ -68,7 +71,7 @@ export const ImportContactsSchema = z.object({
       name: z.string().max(100).optional().default(''),
       phone: phoneSchemaImport,
       email: z.string().email().optional().nullable(),
-      tags: z.array(z.string()).optional(),
+      tags: z.array(z.string()).max(20, 'Máximo de 20 tags por contato').optional(),
       custom_fields: z.record(z.string(), z.any()).optional(),
     })
   )

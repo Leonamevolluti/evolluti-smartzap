@@ -20,6 +20,8 @@ export default defineConfig({
             '**/tmp/gh/**',
             // Testes/artefatos gerados (não são fonte de verdade do produto)
             '**/tmp/tests/**',
+            // Worktrees de agentes (isoladas do produto)
+            '**/.claude/worktrees/**',
         ],
     },
     resolve: {

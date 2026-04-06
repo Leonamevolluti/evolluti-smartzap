@@ -95,6 +95,7 @@
     "libphonenumber-js": "^1.12.29",
     "lucide-react": "^1.7.0",
     "marked": "^17.0.1",
+    "mcp-handler": "^1.1.0",
     "monaco-editor": "^0.55.1",
     "motion": "^12.23.24",
     "nanoid": "^5.1.6",

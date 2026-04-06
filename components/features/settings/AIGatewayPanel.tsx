@@ -184,17 +184,19 @@ export function AIGatewayPanel() {
     }
   };
 
-  const handleSelectModel = async (modelId: string) => {
+  const handleSelectModel = async (modelId: string, providerId: AiProvider) => {
     setSaving(true);
     try {
       const res = await fetch('/api/settings/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: modelId }),
+        // Sempre envia provider + model para garantir consistência no backend
+        body: JSON.stringify({ model: modelId, provider: providerId }),
       });
       if (!res.ok) throw new Error('Erro ao salvar modelo');
       setActiveModel(modelId);
-      updateProvider(activeProvider, { showModelList: false, modelSearch: '' });
+      if (providerId !== activeProvider) setActiveProvider(providerId);
+      updateProvider(providerId, { showModelList: false, modelSearch: '' });
       toast.success('Modelo atualizado');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro ao salvar modelo';
@@ -428,7 +430,7 @@ export function AIGatewayPanel() {
                                     model={m}
                                     isSelected={isActive && activeModel === m.id}
                                     disabled={saving}
-                                    onSelect={handleSelectModel}
+                                    onSelect={(modelId) => handleSelectModel(modelId, id)}
                                   />
                                 ))}
                               </div>
@@ -448,7 +450,7 @@ export function AIGatewayPanel() {
                                     model={m}
                                     isSelected={isActive && activeModel === m.id}
                                     disabled={saving}
-                                    onSelect={handleSelectModel}
+                                    onSelect={(modelId) => handleSelectModel(modelId, id)}
                                   />
                                 ))}
                               </div>

@@ -36,7 +36,7 @@ interface MockFetchResponseOptions {
  * Cria um objeto Response-like para uso com global.fetch mockado.
  *
  * Superset dos campos usados em todos os service tests:
- * ok, status, statusText, json(), text()
+ * ok, status, statusText, headers, json(), text()
  */
 export function createMockFetchResponse(
   data: unknown,
@@ -46,6 +46,7 @@ export function createMockFetchResponse(
     ok: options?.ok ?? true,
     status: options?.status ?? 200,
     statusText: options?.statusText ?? 'OK',
+    headers: { get: vi.fn().mockReturnValue(null) },
     json: vi.fn().mockResolvedValue(data),
     text: vi.fn().mockResolvedValue(JSON.stringify(data)),
   }

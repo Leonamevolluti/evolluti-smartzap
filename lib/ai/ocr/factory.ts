@@ -37,8 +37,8 @@ export async function getOCRProvider(): Promise<OCRProvider | null> {
     geminiOcrModel = settingsMap.get('ocr_gemini_model') || DEFAULT_OCR_MODEL
   }
 
-  // Fallback para env var
-  googleApiKey = googleApiKey || process.env.GOOGLE_API_KEY || undefined
+  // Env var: canônico @ai-sdk/google; GEMINI_API_KEY aceito como alias retrocompat
+  googleApiKey = googleApiKey || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || undefined
 
   if (!googleApiKey) {
     console.warn('[ocr] google_api_key não configurada — OCR indisponível')
@@ -65,7 +65,7 @@ export async function getAvailableOCRProviders(): Promise<OCRProviderName[]> {
     googleApiKey = settingsMap.get('google_api_key') || undefined
   }
 
-  googleApiKey = googleApiKey || process.env.GOOGLE_API_KEY || undefined
+  googleApiKey = googleApiKey || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || undefined
 
   return googleApiKey ? ['gemini'] : []
 }
