@@ -252,11 +252,11 @@ Required:
 
 Optional:
 - `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_BUSINESS_ACCOUNT_ID` (fallback if not in DB)
-- `GEMINI_API_KEY` (AI features)
+- `GOOGLE_GENERATIVE_AI_API_KEY` (AI features — canonical name per `@ai-sdk/google`; `GEMINI_API_KEY` accepted as alias)
 - `MEM0_API_KEY` (conversation memory)
 - `SETUP_COMPLETE=true` (produção — pula consulta ao banco em `isSetupComplete()`, evitando queries desnecessárias)
 
-Env var aliases accepted: `SUPABASE_SECRET_KEY` / `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`
+Env var aliases accepted: `SUPABASE_SECRET_KEY` / `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`, `GEMINI_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY`
 
 ## Language Conventions
 
