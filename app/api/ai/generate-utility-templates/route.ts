@@ -373,7 +373,7 @@ export async function POST(request: NextRequest) {
       const settingsResult = await supabase.admin
         ?.from('settings')
         .select('value')
-        .eq('key', 'gemini_api_key')
+        .eq('key', 'google_api_key')
         .single()
       apiKey = settingsResult?.data?.value || process.env.GOOGLE_GENERATIVE_AI_API_KEY || null
     } catch {

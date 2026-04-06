@@ -37,7 +37,8 @@ async function getSettingValue(key: string): Promise<string | null> {
 
 async function fetchGoogleModels(apiKey: string): Promise<AIModelInfo[]> {
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}&pageSize=200`
+    'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',
+    { headers: { 'x-goog-api-key': apiKey } }
   )
   if (!res.ok) throw new Error(`Google API error: HTTP ${res.status}`)
 

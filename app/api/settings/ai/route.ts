@@ -25,7 +25,8 @@ interface ValidationResult {
 async function validateGoogleKey(apiKey: string): Promise<ValidationResult> {
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}&pageSize=1`
+      'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1',
+      { headers: { 'x-goog-api-key': apiKey } }
     )
     if (res.ok) return { valid: true }
     if (res.status === 400 || res.status === 401 || res.status === 403)

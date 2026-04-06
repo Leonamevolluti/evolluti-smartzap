@@ -9,7 +9,7 @@ import { AI_PROVIDERS, type AIProvider } from '@/lib/ai/providers'
 
 // Mapeamento de provider para chave de API na tabela settings
 const LLM_API_KEY_MAP: Record<AIProvider, { settingKey: string; envVar: string }> = {
-  google: { settingKey: 'gemini_api_key', envVar: 'GEMINI_API_KEY' },
+  google: { settingKey: 'google_api_key', envVar: 'GEMINI_API_KEY' },
   openai: { settingKey: 'openai_api_key', envVar: 'OPENAI_API_KEY' },
 }
 

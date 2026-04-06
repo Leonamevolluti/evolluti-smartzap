@@ -134,14 +134,15 @@ export async function getAiRoutesConfig(): Promise<AiRoutesConfig> {
 export async function getAiDirectConfig(): Promise<AiDirectConfig> {
   if (cachedDirect && isCacheValid()) return cachedDirect
 
-  const [rawDirect, googleApiKey, openaiApiKey] = await Promise.all([
+  const [rawDirect, googleApiKey, geminiApiKeyLegacy, openaiApiKey] = await Promise.all([
     getSettingValue(SETTINGS_KEYS.direct),
     getSettingValue(SETTINGS_KEYS.googleApiKey),
+    getSettingValue('gemini_api_key'), // retrocompatibilidade: chave pode estar salva com nome antigo
     getSettingValue(SETTINGS_KEYS.openaiApiKey),
   ])
 
   const parsed = parseJsonSetting<Partial<Pick<AiDirectConfig, 'provider' | 'model'>>>(rawDirect, {})
-  cachedDirect = normalizeDirect(parsed, googleApiKey, openaiApiKey)
+  cachedDirect = normalizeDirect(parsed, googleApiKey || geminiApiKeyLegacy, openaiApiKey)
   cacheTime = Date.now()
   return cachedDirect
 }
